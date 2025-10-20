@@ -35,6 +35,7 @@ archive/**
 # 处理状态与记录文件
 state/processed_emails.json
 src/state/
+*.json
 
 # 本地命令文件
 command.txt

@@ -6,11 +6,15 @@ LLM 邮件自动化主入口
     python main.py --limit 20 --to someone@example.com --subject "每日邮件总结"
 """
 import os
+import sys
 import json
 import argparse
 from dotenv import load_dotenv
 
-from core.chain import run_pipeline
+# Add src directory to Python path for src layout
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+from email_summarizer.chain import run_pipeline
 
 load_dotenv()
 
@@ -42,7 +46,7 @@ def check_config() -> bool:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LLM 邮件自动化")
-    parser.add_argument("--limit", type=int, default=50, help="读取新邮件最大数量 (1-50)")
+    parser.add_argument("--limit", type=int, default=20, help="读取新邮件最大数量 (1-50)")
     parser.add_argument("--to", type=str, default=os.getenv("DEFAULT_NOTIFY_TO"), help="总结通知的目标邮箱地址（默认读取环境变量 DEFAULT_NOTIFY_TO）")
     parser.add_argument("--subject", type=str, default="今日邮件摘要", help="通知邮件主题")
     parser.add_argument("--all", action="store_true", help="读取所有邮件而非仅未读")

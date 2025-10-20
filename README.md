@@ -14,13 +14,20 @@
 email_summarizer/
 ├── archive/                 # 归档文档输出目录
 │   └── .gitkeep
-├── state/                   # 已处理邮件状态
-│   └── processed_emails.json
-├── core/                    # 核心逻辑
+├── src/                     # 源代码目录
+│   ├── email_summarizer/    # 主要业务逻辑
+│   │   ├── __init__.py
+│   │   ├── chain.py         # LCEL 主流程
+│   │   ├── prompts.py       # Prompt 模板
+│   │   ├── tools/           # EmailReader/Archiver/Sender 工具
+│   │   └── utils/           # 工具函数
+│   └── state/               # 已处理邮件状态
+│       └── processed_emails.json
+├── core/                    # 核心逻辑（旧版本，保留兼容）
 │   ├── __init__.py
-│   ├── chain.py             # LCEL 主流程
-│   ├── prompts.py           # Prompt 模板
-│   └── tools.py             # EmailReader/Archiver/Sender 三大工具
+│   ├── chain.py
+│   ├── prompts.py
+│   └── tools.py
 ├── scripts/
 │   └── setup_config.py      # 配置向导（生成 .env）
 ├── docs/
@@ -85,3 +92,6 @@ python main.py --limit 20 --to someone@example.com --subject "每日邮件总结
 - Prompt 细化与风格控制
 - 归档文件命名策略与分组格式
 - 错误告警与重试机制
+
+## OpenRouter网站的免费api模型可以在这个网页查询
+https://openrouter.ai/models/?q=free

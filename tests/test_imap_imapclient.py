@@ -15,6 +15,7 @@ import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.header import decode_header
 
 from dotenv import load_dotenv
 
@@ -48,6 +49,41 @@ def get_service_cfg():
 
 def get_target_email(default_sender: str) -> str:
     return os.getenv("DEFAULT_NOTIFY_TO") or default_sender
+
+
+def decode_email_subject(subject):
+    """解码邮件标题，处理各种编码格式"""
+    if subject is None:
+        return "无标题"
+    
+    # 如果是bytes类型，先转换为字符串
+    if isinstance(subject, bytes):
+        subject = subject.decode('utf-8', errors='ignore')
+    
+    # 转换为字符串
+    subject_str = str(subject)
+    
+    # 处理编码的标题（如 =?UTF-8?B?...?= 格式）
+    try:
+        decoded_parts = decode_header(subject_str)
+        decoded_subject = ""
+        for part, encoding in decoded_parts:
+            if isinstance(part, bytes):
+                if encoding:
+                    try:
+                        decoded_subject += part.decode(encoding, errors='ignore')
+                    except (UnicodeDecodeError, LookupError):
+                        # 如果指定编码失败，尝试UTF-8
+                        decoded_subject += part.decode('utf-8', errors='ignore')
+                else:
+                    # 没有指定编码，尝试UTF-8
+                    decoded_subject += part.decode('utf-8', errors='ignore')
+            else:
+                decoded_subject += str(part)
+        return decoded_subject.strip()
+    except Exception as e:
+        # 如果解码失败，返回原始字符串
+        return subject_str
 
 
 def make_test_message(fr: str, to: str) -> bytes:
@@ -129,11 +165,51 @@ if __name__ == "__main__":
                     fetch_data = client.fetch(uids[:5], [b'ENVELOPE'])
                     for uid, data in fetch_data.items():
                         env = data.get(b'ENVELOPE')
-                        subject = env.subject.decode(errors='ignore') if hasattr(env.subject, 'decode') else str(env.subject)
+                        subject = decode_email_subject(env.subject)
                         print(f"  - UID={uid} subject={subject}")
             except Exception as e:
                 print("❌ 搜索/读取失败:", e)
                 logs.append(f"[IMAP] 搜索/读取：失败（{e}）")
+
+            # 读取最近一封邮件并打印标题
+            try:
+                print("\n📧 正在读取最近一封邮件...")
+                # 搜索所有邮件，按日期排序获取最新的
+                all_uids = client.search(["ALL"])
+                if all_uids:
+                    # 获取最后一个UID（最新的邮件）
+                    latest_uid = all_uids[-1]
+                    print(f"📮 最新邮件UID: {latest_uid}")
+                    
+                    # 获取邮件的ENVELOPE信息（包含标题、发件人、日期等）
+                    fetch_data = client.fetch([latest_uid], [b'ENVELOPE', b'INTERNALDATE'])
+                    
+                    if latest_uid in fetch_data:
+                        data = fetch_data[latest_uid]
+                        env = data.get(b'ENVELOPE')
+                        internal_date = data.get(b'INTERNALDATE')
+                        
+                        # 解码并打印邮件信息
+                        subject = decode_email_subject(env.subject)
+                        sender = env.from_[0] if env.from_ else None
+                        sender_name = decode_email_subject(sender.name) if sender and sender.name else "未知发件人"
+                        sender_email = sender.mailbox.decode() + "@" + sender.host.decode() if sender else "未知邮箱"
+                        
+                        print(f"✅ 最新邮件信息:")
+                        print(f"   📝 标题: {subject}")
+                        print(f"   👤 发件人: {sender_name} <{sender_email}>")
+                        print(f"   📅 日期: {internal_date}")
+                        
+                        logs.append(f"[IMAP] 最新邮件读取：成功，标题='{subject}'")
+                    else:
+                        print("⚠️ 无法获取最新邮件详情")
+                        logs.append("[IMAP] 最新邮件读取：获取详情失败")
+                else:
+                    print("📭 邮箱中没有邮件")
+                    logs.append("[IMAP] 最新邮件读取：邮箱为空")
+            except Exception as e:
+                print(f"❌ 读取最新邮件失败: {e}")
+                logs.append(f"[IMAP] 最新邮件读取：失败（{e}）")
 
             # 附加一封测试邮件（不会对外发送，仅验证 APPEND）
             try:

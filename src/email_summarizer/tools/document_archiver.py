@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
 # 计算项目根路径
-CORE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE_DIR = os.path.dirname(CORE_DIR)
+CORE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # src/email_summarizer
+SRC_DIR = os.path.dirname(CORE_DIR)  # src
+BASE_DIR = os.path.dirname(SRC_DIR)  # 项目根目录
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 
 # 确保基础目录存在

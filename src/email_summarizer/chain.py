@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+chain.py
 LCEL 编排流程
 - 读取新邮件 -> 并行总结(生成HTML卡片) -> 聚合报告 -> 归档 -> 组装完整HTML邮件 -> 发送
 """
 import os
 import json
-import time
-import sys
-import threading
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 
 from dotenv import load_dotenv
@@ -22,61 +20,217 @@ from .tools.document_archiver import DocumentArchiverTool
 from .tools.email_sender import EmailSenderTool
 from .utils.email_utils import extract_email_contents, aggregate_report_for_attachment
 from .utils.html_utils import compose_final_html_body
+from .utils.error_handler import handle_llm_error
+from .utils.progress import ProgressTimer
 
 load_dotenv()
 
 
-class ProgressTimer:
-    """实时进度计时器"""
-    def __init__(self, timeout_seconds=60):
-        self.timeout_seconds = timeout_seconds
-        self.start_time = None
-        self.stop_event = threading.Event()
-        self.timer_thread = None
+
+
+
+def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
+    """
+    读取邮件
+    
+    Args:
+        limit: 最大邮件数量
+        use_unseen: 是否只读取未读邮件
         
-    def start(self, message="处理中"):
-        """开始计时器"""
-        self.start_time = time.time()
-        self.stop_event.clear()
-        self.timer_thread = threading.Thread(target=self._update_timer, args=(message,))
-        self.timer_thread.daemon = True
-        self.timer_thread.start()
+    Returns:
+        List[Dict]: 邮件列表
+    """
+    print("📬 正在读取邮件...")
+    reader = EmailReaderTool()
+    reader_result = reader.invoke({"max_count": limit, "folder": "INBOX", "use_unseen": use_unseen})
+    emails = extract_email_contents(reader_result)
+    
+    if not emails:
+        print("✅ 没有新的待处理邮件")
+        return []
+    
+    print(f"📧 接收到 {len(emails)} 封邮件，准备交给LLM处理")
+    return emails
+
+
+def _setup_llm_chain():
+    """
+    设置LLM链
+    
+    Returns:
+        LLM链对象
+    """
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+    base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+    llm = ChatOpenAI(model=model_name, temperature=0, base_url=base_url) if base_url else ChatOpenAI(model=model_name, temperature=0)
+    summarizer_prompt = get_email_summarizer_prompt()
+    return summarizer_prompt | llm | StrOutputParser()
+
+
+def _process_emails_parallel(emails: List[Dict], timer: ProgressTimer) -> List[str]:
+    """
+    并行处理邮件总结
+    
+    Args:
+        emails: 邮件列表
+        timer: 进度计时器
         
-    def stop(self):
-        """停止计时器"""
-        if self.timer_thread:
-            self.stop_event.set()
-            self.timer_thread.join(timeout=1)
-            # 清除当前行
-            sys.stdout.write('\r' + ' ' * 80 + '\r')
-            sys.stdout.flush()
-            
-    def _update_timer(self, message):
-        """更新计时器显示"""
-        while not self.stop_event.is_set():
-            elapsed = time.time() - self.start_time
-            remaining = max(0, self.timeout_seconds - elapsed)
-            
-            if remaining <= 0:
-                sys.stdout.write(f'\r⏰ 超时！已等待 {elapsed:.1f}s')
-                sys.stdout.flush()
+    Returns:
+        List[str]: 邮件总结HTML列表
+    """
+    summarizer_chain = _setup_llm_chain()
+    contents = [{"email_subject": e.get("subject", "(No Subject)"), "email_content": e["content"]} for e in emails]
+    
+    # 显示并行请求数量
+    max_concurrency = min(8, len(contents)) or 1
+    print(f"🚀 并行发起 {max_concurrency} 个LLM请求处理邮件总结")
+    
+    # 启动进度计时器
+    timer.start("LLM处理邮件总结")
+    
+    # 使用ThreadPoolExecutor实现超时控制
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        # 提交所有任务
+        future_to_content = {
+            executor.submit(summarizer_chain.invoke, content): i 
+            for i, content in enumerate(contents)
+        }
+        
+        summary_htmls = [None] * len(contents)
+        completed_count = 0
+        error_count = 0
+        should_continue = True
+        last_error_msg = ""
+        
+        # 等待任务完成，带超时
+        for future in as_completed(future_to_content, timeout=60):
+            if not should_continue:
+                # 如果遇到严重错误，取消剩余任务
+                for remaining_future in future_to_content:
+                    if not remaining_future.done():
+                        remaining_future.cancel()
                 break
                 
-            # 显示进度条
-            progress = elapsed / self.timeout_seconds
-            bar_length = 20
-            filled_length = int(bar_length * progress)
-            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            try:
+                result = future.result()
+                index = future_to_content[future]
+                summary_htmls[index] = result
+                completed_count += 1
+                
+                # 简化进度显示
+                if completed_count % 2 == 0 or completed_count == len(contents):  # 每2个或最后一个才显示
+                    progress = completed_count / len(contents)
+                    print(f"\r✅ 已完成 {completed_count}/{len(contents)} 个总结 ({progress:.0%})", end='', flush=True)
+                
+            except Exception as e:
+                error_count += 1
+                error_msg, should_continue = handle_llm_error(e)
+                
+                # 避免重复输出相同错误
+                if error_msg != last_error_msg:
+                    print(f"\n{error_msg}")
+                    last_error_msg = error_msg
+                
+                # 如果是严重错误，提前退出
+                if not should_continue:
+                    print(f"\n🛑 检测到严重错误，停止处理剩余任务")
+                    break
+    
+    timer.stop()
+    
+    # 显示最终结果
+    success_count = len([s for s in summary_htmls if s])
+    if success_count > 0:
+        print(f"\n🎯 LLM处理完成！成功生成 {success_count} 个邮件总结")
+        if error_count > 0:
+            print(f"⚠️ 其中 {error_count} 个处理失败")
+    else:
+        print(f"\n❌ LLM处理失败！所有邮件总结都未能生成")
+        if error_count > 0:
+            print(f"💡 建议检查LLM配置和网络连接")
+    
+    return summary_htmls
+
+
+def _generate_archive(summary_htmls: List[str], emails: List[Dict], send_attachment: bool) -> Optional[str]:
+    """
+    生成归档文件
+    
+    Args:
+        summary_htmls: 邮件总结HTML列表
+        emails: 邮件列表
+        send_attachment: 是否需要生成归档文件
+        
+    Returns:
+        Optional[str]: 归档文件路径，如果不需要归档则返回None
+    """
+    if not send_attachment:
+        return None
+        
+    print("📁 正在生成归档文件...")
+    report_text_for_attachment = aggregate_report_for_attachment(summary_htmls, emails)
+    archiver = DocumentArchiverTool()
+    archive_result = archiver.invoke({"report_text": report_text_for_attachment})
+    
+    try:
+        archive_path = json.loads(archive_result).get("archive_path")
+        if archive_path:
+            print(f"📄 归档文件已生成: {archive_path}")
+            return archive_path
+    except Exception as e:
+        print(f"⚠️ 归档文件生成失败: {e}")
+    
+    return None
+
+
+def _send_email(target_email: str, subject: str, final_html_body: str, archive_path: Optional[str], send_attachment: bool) -> Dict:
+    """
+    发送邮件
+    
+    Args:
+        target_email: 目标邮箱
+        subject: 邮件主题
+        final_html_body: 邮件HTML正文
+        archive_path: 归档文件路径
+        send_attachment: 是否发送附件
+        
+    Returns:
+        Dict: 发送结果
+    """
+    print("📤 正在发送邮件...")
+    try:
+        sender = EmailSenderTool()
+        send_result_str = sender.invoke({
+            "to": target_email,
+            "subject": subject,
+            "body": final_html_body,
+            "is_html": True,
+            "attachment_path": archive_path if send_attachment else None
+        })
+        result = json.loads(send_result_str)
+        
+        # 检查发送结果
+        if "error" in result:
+            print(f"❌ 邮件发送失败: {result['error']}")
+            return {"status": "error", "error": result["error"]}
+        else:
+            print("✅ 邮件发送成功!")
+            return result
             
-            sys.stdout.write(f'\r🔄 {message} [{bar}] {elapsed:.1f}s/{self.timeout_seconds}s (剩余 {remaining:.1f}s)')
-            sys.stdout.flush()
-            time.sleep(0.5)
+    except Exception as e:
+        error_msg = f"邮件发送过程中出现异常: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {"status": "error", "error": error_msg}
 
 
 def mark_emails_as_unprocessed(emails: List[Dict]):
     """将邮件标记为未处理状态"""
     try:
-        state_file = "state/processed_emails.json"
+        # 使用与email_reader.py相同的路径计算方式
+        current_dir = os.path.dirname(os.path.abspath(__file__))  # src/email_summarizer
+        base_dir = os.path.dirname(current_dir)  # src
+        state_file = os.path.join(base_dir, "state", "processed_emails.json")
+        
         if os.path.exists(state_file):
             with open(state_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
@@ -98,104 +252,51 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
     执行完整流程：读取 -> 总结(生成HTML卡片) -> 归档(可选) -> 组装完整HTML邮件 -> 发送
     
     Args:
+        limit: 最大邮件数量
+        target_email: 目标邮箱地址
+        subject: 邮件主题
+        use_unseen: 是否只读取未读邮件
         send_attachment: 是否发送归档文件作为附件，默认为False
+        
+    Returns:
+        Dict: 处理结果
     """
     timer = ProgressTimer(timeout_seconds=60)
     emails = []
     
     try:
         # 1) 读取新邮件
-        print("📬 正在读取邮件...")
-        reader = EmailReaderTool()
-        reader_result = reader.invoke({"max_count": limit, "folder": "INBOX", "use_unseen": use_unseen})
-        emails = extract_email_contents(reader_result)
-
+        emails = _read_emails(limit, use_unseen)
         if not emails:
-            print("✅ 没有新的待处理邮件")
             return {"status": "no_new_emails", "message": "没有新的待处理邮件"}
 
-        # 显示接收到的邮件数量
-        print(f"📧 接收到 {len(emails)} 封邮件，准备交给LLM处理")
-        
         # 2) 并行总结（生成HTML卡片）
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
-        base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-        llm = ChatOpenAI(model=model_name, temperature=0, base_url=base_url) if base_url else ChatOpenAI(model=model_name, temperature=0)
-        summarizer_prompt = get_email_summarizer_prompt()
-        summarizer_chain = summarizer_prompt | llm | StrOutputParser()
-
-        contents = [{"email_subject": e.get("subject", "(No Subject)"), "email_content": e["content"]} for e in emails]
-        
-        # 显示并行请求数量
-        max_concurrency = min(8, len(contents)) or 1
-        print(f"🚀 并行发起 {max_concurrency} 个LLM请求处理邮件总结")
-        
-        # 启动进度计时器
-        timer.start("LLM处理邮件总结")
-        
-        # 使用ThreadPoolExecutor实现超时控制
-        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            # 提交所有任务
-            future_to_content = {
-                executor.submit(summarizer_chain.invoke, content): i 
-                for i, content in enumerate(contents)
-            }
-            
-            summary_htmls = [None] * len(contents)
-            completed_count = 0
-            
-            # 等待任务完成，带超时
-            for future in as_completed(future_to_content, timeout=60):
-                try:
-                    result = future.result()
-                    index = future_to_content[future]
-                    summary_htmls[index] = result
-                    completed_count += 1
-                    
-                    # 更新进度
-                    progress = completed_count / len(contents)
-                    print(f"\r✅ 已完成 {completed_count}/{len(contents)} 个总结 ({progress:.1%})", end='', flush=True)
-                    
-                except Exception as e:
-                    print(f"\n⚠️ 处理邮件总结时出错: {e}")
-                    
-        timer.stop()
-        print(f"\n🎯 LLM处理完成！共生成 {len([s for s in summary_htmls if s])} 个邮件总结")
+        summary_htmls = _process_emails_parallel(emails, timer)
 
         # 3) 归档 (仅在需要发送附件时执行)
-        archive_path = None
-        if send_attachment:
-            print("📁 正在生成归档文件...")
-            report_text_for_attachment = aggregate_report_for_attachment(summary_htmls, emails)
-            archiver = DocumentArchiverTool()
-            archive_result = archiver.invoke({"report_text": report_text_for_attachment})
-            try:
-                archive_path = json.loads(archive_result).get("archive_path")
-                if archive_path:
-                    print(f"📄 归档文件已生成: {archive_path}")
-            except Exception as e:
-                print(f"⚠️ 归档文件生成失败: {e}")
-                archive_path = None
+        archive_path = _generate_archive(summary_htmls, emails, send_attachment)
 
         # 4) 组装最终的HTML邮件正文
         print("📝 正在组装邮件内容...")
         final_html_body = compose_final_html_body(summary_htmls, archive_path)
 
         # 5) 发送邮件
-        print("📤 正在发送邮件...")
-        sender = EmailSenderTool()
-        send_result_str = sender.invoke({
-            "to": target_email,
-            "subject": subject,
-            "body": final_html_body,
-            "is_html": True,
-            "attachment_path": archive_path if send_attachment else None
-        })
-        send_result = json.loads(send_result_str)
+        send_result = _send_email(target_email, subject, final_html_body, archive_path, send_attachment)
 
+        # 检查发送结果
+        if send_result.get("status") == "error":
+            print(f"❌ 邮件发送失败: {send_result.get('error', '未知错误')}")
+            print("🔄 正在恢复邮件为未处理状态...")
+            mark_emails_as_unprocessed(emails)
+            return {
+                "status": "send_failed",
+                "error": send_result.get("error", "邮件发送失败"),
+                "email_count": len(emails)
+            }
+        
         print("🎉 邮件发送完成！")
         return {
-            "status": send_result.get("status", "unknown"),
+            "status": send_result.get("status", "sent"),
             "to": target_email,
             "subject": subject,
             "archive_path": archive_path,

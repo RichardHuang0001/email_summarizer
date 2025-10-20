@@ -3,7 +3,7 @@
 """
 chain.py
 LCEL 编排流程
-- 读取新邮件 -> 并行总结(生成HTML卡片) -> 聚合报告 -> 归档 -> 组装完整HTML邮件 -> 发送
+- 读取新邮件 -> 并行总结(生成HTML卡片) -> 组装完整HTML -> 保存归档 -> 发送邮件
 """
 import os
 import json
@@ -12,15 +12,18 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 import webbrowser
 import threading
 from pathlib import Path
+from datetime import datetime
+
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 
 from .prompts import get_email_summarizer_prompt
 from .tools.email_reader import EmailReaderTool
-from .tools.document_archiver import DocumentArchiverTool
+# DocumentArchiverTool is no longer needed here, its logic is integrated below
 from .tools.email_sender import EmailSenderTool
-from .utils.email_utils import extract_email_contents, aggregate_report_for_attachment
+# aggregate_report_for_attachment is no longer needed
+from .utils.email_utils import extract_email_contents
 from .utils.html_utils import compose_final_html_body
 from .utils.error_handler import handle_llm_error
 from .utils.progress import ProgressTimer
@@ -31,13 +34,6 @@ load_dotenv()
 def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
     """
     读取邮件
-    
-    Args:
-        limit: 最大邮件数量
-        use_unseen: 是否只读取未读邮件
-        
-    Returns:
-        List[Dict]: 邮件列表
     """
     print("📬 正在读取邮件...")
     reader = EmailReaderTool()
@@ -55,9 +51,6 @@ def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
 def _setup_llm_chain():
     """
     设置LLM链
-    
-    Returns:
-        LLM链对象
     """
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
     base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
@@ -69,13 +62,6 @@ def _setup_llm_chain():
 def _process_emails_parallel(emails: List[Dict], timer: ProgressTimer) -> List[str]:
     """
     并行处理邮件总结
-    
-    Args:
-        emails: 邮件列表
-        timer: 进度计时器
-        
-    Returns:
-        List[str]: 邮件总结HTML列表
     """
     summarizer_chain = _setup_llm_chain()
     contents = [{"email_subject": e.get("subject", "(No Subject)"), "email_content": e["content"]} for e in emails]
@@ -138,66 +124,52 @@ def _process_emails_parallel(emails: List[Dict], timer: ProgressTimer) -> List[s
         if error_count > 0:
             print(f"💡 建议检查LLM配置和网络连接")
     
-    return summary_htmls
+    return [s for s in summary_htmls if s]
 
 
-def _generate_and_save_archive(summary_htmls: List[str], emails: List[Dict]) -> Optional[str]:
+def _save_archive_and_get_path(html_content: str) -> Optional[str]:
     """
-    【修改】总是生成并保存归档文件
-    
-    Args:
-        summary_htmls: 邮件总结HTML列表
-        emails: 邮件列表
-        
-    Returns:
-        Optional[str]: 归档文件路径，如果生成失败则返回None
+    【新】将完整的HTML内容保存到归档文件并返回路径。
     """
-    print("📁 正在生成归档文件...")
-    # 确保即使部分总结失败，也能生成报告
-    valid_summaries = [s for s in summary_htmls if s]
-    if not valid_summaries:
-        print("⚠️ 没有有效的总结内容，无法生成归档文件。")
+    if not html_content:
+        print("⚠️ 没有内容可供归档。")
         return None
-        
-    report_text_for_attachment = aggregate_report_for_attachment(summary_htmls, emails)
-    archiver = DocumentArchiverTool()
-    archive_result = archiver.invoke({"report_text": report_text_for_attachment})
     
     try:
-        archive_path = json.loads(archive_result).get("archive_path")
-        if archive_path:
-            print(f"📄 归档文件已生成: {archive_path}")
-            return archive_path
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(os.path.dirname(current_dir)) # Project root
+        archive_dir = os.path.join(base_dir, "archive")
+        os.makedirs(archive_dir, exist_ok=True)
+        
+        filename = f"archive_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.html"
+        archive_path = os.path.join(archive_dir, filename)
+        
+        with open(archive_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        print(f"📄 归档文件已生成: {archive_path}")
+        return archive_path
     except Exception as e:
         print(f"⚠️ 归档文件生成失败: {e}")
-    
-    return None
+        return None
 
 
 def _send_email(target_email: str, subject: str, final_html_body: str, archive_path: Optional[str], send_attachment: bool) -> Dict:
     """
     发送邮件
-    
-    Args:
-        target_email: 目标邮箱
-        subject: 邮件主题
-        final_html_body: 邮件HTML正文
-        archive_path: 归档文件路径
-        send_attachment: 是否发送附件
-        
-    Returns:
-        Dict: 发送结果
     """
     print("📤 正在发送邮件...")
     try:
         sender = EmailSenderTool()
+        # 【修改】附件路径现在直接使用 archive_path，但仅在 send_attachment 为 True 时传递
+        attachment_to_send = archive_path if send_attachment else None
+        
         send_result_str = sender.invoke({
             "to": target_email,
             "subject": subject,
             "body": final_html_body,
             "is_html": True,
-            # 【修改】这里的逻辑现在是正确的：仅当 send_attachment 为 True 时才传递路径
-            "attachment_path": archive_path if send_attachment else None
+            "attachment_path": attachment_to_send
         })
         result = json.loads(send_result_str)
         
@@ -238,19 +210,9 @@ def mark_emails_as_unprocessed(emails: List[Dict]):
 
 def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总结", use_unseen: bool = True, send_attachment: bool = False) -> Dict:
     """
-    执行完整流程：读取 -> 总结 -> 归档 -> 组装邮件 -> 发送
-    
-    Args:
-        limit: 最大邮件数量
-        target_email: 目标邮箱地址
-        subject: 邮件主题
-        use_unseen: 是否只读取未读邮件
-        send_attachment: 是否将归档文件作为附件发送
-        
-    Returns:
-        Dict: 处理结果
+    【修改后流程】执行完整流程：读取 -> 总结 -> 组装HTML -> 保存归档 -> 发送
     """
-    timer = ProgressTimer(timeout_seconds=120) # 增加超时时间
+    timer = ProgressTimer(timeout_seconds=120)
     emails = []
     
     try:
@@ -259,67 +221,63 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
             return {"status": "no_new_emails", "message": "没有新的待处理邮件"}
 
         summary_htmls = _process_emails_parallel(emails, timer)
+        if not summary_htmls:
+             # 如果所有总结都失败，则没有内容可发送或归档
+            print("🛑 所有邮件总结均失败，流程终止。")
+            mark_emails_as_unprocessed(emails)
+            return {"status": "error", "message": "所有LLM总结均失败，无内容可处理。"}
 
-        # 【修改】总是生成归档文件，不再依赖 send_attachment 参数
-        archive_path = _generate_and_save_archive(summary_htmls, emails)
-
+        # --- 【核心逻辑修改】 ---
+        # 1. 组装最终的HTML邮件正文。我们暂时不传入归档路径，因为还不知道
         print("📝 正在组装邮件内容...")
-        final_html_body = compose_final_html_body(summary_htmls, archive_path)
+        final_html_body = compose_final_html_body(summary_htmls, None)
 
-        # 并行启动浏览器预览，不影响后续邮件发送
+        # 2. 将这份完整的HTML内容保存到文件，并获取路径
+        archive_path = _save_archive_and_get_path(final_html_body)
+
+        # 3. (可选) 如果需要，可以将归档路径回填到HTML中（用于邮件）
+        #    这一步是可选的，因为邮件附件本身就是一种链接
+        if archive_path and send_attachment:
+             final_html_body = compose_final_html_body(summary_htmls, os.path.basename(archive_path))
+
+        # 4. 启动浏览器预览
         if archive_path:
             threading.Thread(target=_open_html_preview, args=(archive_path,), daemon=True).start()
 
+        # 5. 发送邮件
         send_result = _send_email(target_email, subject, final_html_body, archive_path, send_attachment)
 
         if send_result.get("status") == "error":
             print(f"❌ 邮件发送失败: {send_result.get('error', '未知错误')}")
             print("🔄 正在恢复邮件为未处理状态...")
             mark_emails_as_unprocessed(emails)
-            return {
-                "status": "send_failed",
-                "error": send_result.get("error", "邮件发送失败"),
-                "email_count": len(emails)
-            }
+            return { "status": "send_failed", "error": send_result.get("error", "邮件发送失败"), "email_count": len(emails) }
         
         print("\n🎉 流程执行成功！")
         return {
-            "status": send_result.get("status", "sent"),
-            "to": target_email,
-            "subject": subject,
-            "archive_path": archive_path, # 现在这里总会有一个路径 (如果成功)
-            "email_count": len(emails)
+            "status": "sent", "to": target_email, "subject": subject,
+            "archive_path": archive_path, "email_count": len(emails)
         }
         
     except (TimeoutError, KeyboardInterrupt) as e:
         timer.stop()
-        status = "timeout" if isinstance(e, TimeoutError) else "interrupted"
-        message = "处理超时" if status == "timeout" else "用户中断"
+        status, message = ("timeout", "处理超时") if isinstance(e, TimeoutError) else ("interrupted", "用户中断")
         print(f"\n⚠️ {message}！")
         print("🔄 正在恢复邮件为未处理状态...")
         mark_emails_as_unprocessed(emails)
-        return {
-            "status": status,
-            "message": f"{message}，邮件已恢复为未处理状态",
-            "email_count": len(emails)
-        }
+        return { "status": status, "message": f"{message}，邮件已恢复为未处理状态", "email_count": len(emails) }
         
     except Exception as e:
         timer.stop()
         print(f"\n❌ 处理过程中出现严重错误: {e}")
         print("🔄 正在恢复邮件为未处理状态...")
         mark_emails_as_unprocessed(emails)
-        return {
-            "status": "error",
-            "message": f"处理失败: {e}",
-            "email_count": len(emails)
-        }
+        return { "status": "error", "message": f"处理失败: {e}", "email_count": len(emails) }
 
 
 def _open_html_preview(file_path: Optional[str]) -> None:
     """在默认浏览器中打开本地HTML预览（不阻塞主流程）"""
-    if not file_path:
-        return
+    if not file_path: return
     try:
         abs_path = os.path.abspath(file_path)
         if not os.path.exists(abs_path):
@@ -330,4 +288,3 @@ def _open_html_preview(file_path: Optional[str]) -> None:
         webbrowser.open(url, new=2)
     except Exception as e:
         print(f"⚠️ 打开浏览器预览失败: {e}")
-

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-email_sender.py. : 通过 SMTP 发送邮件，支持 HTML/附件/抄送（带重试和 STARTTLS）
+email_sender.py. : 通过 SMTP 发送邮件，支持 HTML/附件/抄送（带重试和智能连接）
 """
 import os
 import json
@@ -49,8 +49,9 @@ class EmailSenderTool(BaseTool):
         self._email = self._cfg["username"]
         self._auth = self._cfg["password"]
         self._smtp_host = self._cfg["smtp_host"]
-        # 默认 SMTP 端口改为 587 (用于 STARTTLS)
-        self._smtp_port = int(self._cfg.get("smtp_port", 587))
+        # 根据服务商设置默认端口
+        default_port = 465 if "163.com" in self._smtp_host else 587
+        self._smtp_port = int(self._cfg.get("smtp_port", default_port))
 
     def _prepare_message(self, to: str, subject: str, body: str, is_html: bool = False,
                           attachment_path: Optional[str] = None, cc: Optional[str] = None) -> MIMEMultipart:
@@ -84,13 +85,20 @@ class EmailSenderTool(BaseTool):
             print("  - [SMTP] 正在尝试发送邮件...")
             
             # --- 【核心修改】 ---
-            # 从 SMTP_SSL (端口 465) 切换到 SMTP + starttls() (端口 587)
-            # 这种方式对网络环境的兼容性更好
-            with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30) as server:
-                server.starttls()  # 将连接升级为安全的 TLS 连接
-                server.login(self._email, self._auth)
-                to_addrs = [to] + ([cc] if cc else [])
-                server.sendmail(self._email, to_addrs, msg.as_string())
+            # 根据端口号，智能选择 SMTP_SSL (465) 或 STARTTLS (587)
+            if self._smtp_port == 465:
+                print(f"  - [SMTP] 使用 SMTP_SSL (端口 {self._smtp_port}) 连接...")
+                with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30) as server:
+                    server.login(self._email, self._auth)
+                    to_addrs = [to] + ([cc] if cc else [])
+                    server.sendmail(self._email, to_addrs, msg.as_string())
+            else:
+                print(f"  - [SMTP] 使用 STARTTLS (端口 {self._smtp_port}) 连接...")
+                with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30) as server:
+                    server.starttls()
+                    server.login(self._email, self._auth)
+                    to_addrs = [to] + ([cc] if cc else [])
+                    server.sendmail(self._email, to_addrs, msg.as_string())
             
             print("  - [SMTP] 邮件发送成功！")
             return json.dumps({"status": "sent", "to": to, "subject": subject}, ensure_ascii=False)
@@ -98,3 +106,5 @@ class EmailSenderTool(BaseTool):
         except Exception as e:
             print(f"  - [SMTP] 邮件发送失败，准备重试... 错误: {e}")
             raise e
+
+

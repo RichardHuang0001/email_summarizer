@@ -9,14 +9,27 @@ from langchain_core.prompts import ChatPromptTemplate
 
 
 def get_email_summarizer_prompt() -> ChatPromptTemplate:
+    """
+    一个优化的Prompt，用于学生邮箱场景。
+    1. 判断类别
+    2. 评估重要性 (1-5星)
+    3. 简短总结
+    4. 严格限制纯文本输出 (无Markdown)
+    """
+    
+    system_message = """你是一个高效的学生邮件助手。请快速完成三项任务：
+
+1.  **分类**：从 [学术/校园, 招聘/求职, 个人/社交, 广告/推广] 中选择一个。
+2.  **评级**：给出1-5星的重要性评级 (5星最重要)。
+3.  **总结**：生成30-50字的中文核心内容。
+
+请严格使用以下纯文本格式回复，绝对不要使用Markdown (如 ** 或 ##)：
+分类：[此处填写分类]
+评级：[此处生成对应数量的星号]
+总结：[此处填写总结]"""
+
     return ChatPromptTemplate.from_messages([
-        ("system", "你是一个高效的邮件助理。请根据邮件的主题与正文，提取核心要点、行动项、重要日期与联系人，生成结构化且简洁的中文总结。务必考虑主题的关键信息，不要遗漏。"),
+        ("system", system_message),
         ("human", "邮件主题：{email_subject}\n\n邮件内容如下：\n{email_content}")
     ])
 
-
-def get_final_email_draft_prompt() -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages([
-        ("system", "你将根据今日的邮件总结报告，撰写一封通知邮件发送给指定对象。正文应简洁明了，列出要点与下一步动作，并说明附件中有详细归档。"),
-        ("human", "总结报告如下：\n{summary_report}\n\n归档文件路径：{archive_path}\n\n请撰写一封简洁、专业的中文通知邮件。")
-    ])

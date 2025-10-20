@@ -5,13 +5,13 @@ Prompt 模块
 - EmailSummarizerPrompt: 针对单封邮件生成结构化总结
 - FinalEmailDraftPrompt: 针对聚合报告撰写简洁通知邮件
 """
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 
 def get_email_summarizer_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
-        ("system", "你是一个高效的邮件助理。请根据以下邮件内容，提取核心要点、行动项、日期与联系人，生成结构化的简洁总结。避免冗长，突出关键信息。"),
-        ("human", "邮件内容如下：\n{email_content}")
+        ("system", "你是一个高效的邮件助理。请根据邮件的主题与正文，提取核心要点、行动项、重要日期与联系人，生成结构化且简洁的中文总结。务必考虑主题的关键信息，不要遗漏。"),
+        ("human", "邮件主题：{email_subject}\n\n邮件内容如下：\n{email_content}")
     ])
 
 

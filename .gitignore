@@ -1,0 +1,40 @@
+# 操作系统与编辑器
+.DS_Store
+.vscode/
+.idea/
+
+# Python 缓存与构建
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.log
+.pytest_cache/
+.cache/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 本地敏感配置（不追踪真实密钥）
+.env
+.env.*
+.envrc
+config/.env
+config/*.env
+!config/.env.example
+
+# 归档与生成的报告（保留占位文件）
+archive/**
+!archive/.gitkeep
+
+# 处理状态与记录文件
+state/processed_emails.json
+
+# 本地命令文件
+command.txt
+commands.txt

@@ -58,8 +58,8 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
     summarizer_prompt = get_email_summarizer_prompt()
     summarizer_chain = summarizer_prompt | llm | StrOutputParser()
 
-    contents = [{"email_content": e["content"]} for e in emails]
-    summary_texts: List[str] = summarizer_chain.batch(contents, config={"max_concurrency": 4})
+    contents = [{"email_subject": e.get("subject", "(No Subject)"), "email_content": e["content"]} for e in emails]
+    summary_texts: List[str] = summarizer_chain.batch(contents, config={"max_concurrency": min(8, len(contents)) or 1})
 
     summaries = list(zip(summary_texts, emails))
     report_text = _aggregate_report(summaries)

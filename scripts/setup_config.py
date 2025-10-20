@@ -139,6 +139,10 @@ def main():
         print("   - 邮箱授权码是否正确")
         print("   - 网络连接是否正常")
         print("   - 是否需要配置代理")
+        print("\n🔌 LLM 配置提示：如使用 OpenRouter")
+        print("   - 在 .env 中设置 OPENAI_BASE_URL=https://openrouter.ai/api/v1")
+        print("   - 将你的 OPENROUTER_API_KEY 填入 OPENAI_API_KEY")
+        print("   - 如需指定模型，设置 OPENAI_MODEL=openai/gpt-4o（或你偏好的模型）")
     else:
         print("\n❌ 配置失败，请重新运行此脚本。")
 

@@ -22,6 +22,7 @@ import html2text
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
+from imapclient import IMAPClient
 
 load_dotenv()
 
@@ -139,59 +140,64 @@ class EmailReaderTool(BaseTool):
         results: List[Dict] = []
 
         try:
-            mail = imaplib.IMAP4_SSL(self._imap_host)
-            mail.login(self._email, self._auth)
-            mail.select(folder, readonly=True)
+            with IMAPClient(self._imap_host, ssl=True) as client:
+                client.login(self._email, self._auth)
+                # 163/Coremail 等服务的 ID 握手（若不支持则忽略错误）
+                try:
+                    client.id_({"name": "email-summarizer", "version": "0.1", "vendor": "TraeAI", "os": "macOS"})
+                except Exception:
+                    pass
 
-            criteria = "UNSEEN" if use_unseen else "ALL"
-            status, messages = mail.search(None, criteria)
-            if status != "OK":
-                return json.dumps({"error": "IMAP search failed"}, ensure_ascii=False)
+                # 优先只读选择，失败则读写
+                try:
+                    client.select_folder(folder, readonly=True)
+                except Exception:
+                    client.select_folder(folder, readonly=False)
 
-            email_ids = messages[0].split()
-            latest_ids = email_ids[-max_count:]
+                criteria = ["UNSEEN"] if use_unseen else ["ALL"]
+                uids = client.search(criteria)
+                if not uids:
+                    return json.dumps({"emails": []}, ensure_ascii=False)
 
-            # 读取与去重
-            new_ids: List[str] = []
-            for eid in reversed(latest_ids):
-                status, msg_data = mail.fetch(eid, "(RFC822)")
-                if status != "OK":
-                    continue
-                raw = msg_data[0][1]
-                msg = email.message_from_bytes(raw)
+                uids = sorted(uids)
+                latest_uids = uids[-max_count:]
 
-                mid = msg.get("Message-ID") or ""
-                mid = mid.strip()
-                subject = self._decode_header(msg.get("Subject"))
-                sender = self._decode_header(msg.get("From"))
-                date = self._decode_header(msg.get("Date"))
-                content = self._extract_content(msg)
+                new_ids: List[str] = []
+                fetch_data = client.fetch(latest_uids, [b'RFC822'])
+                for uid in reversed(latest_uids):
+                    data = fetch_data.get(uid)
+                    if not data:
+                        continue
+                    raw = data[b'RFC822']
+                    msg = email.message_from_bytes(raw)
 
-                # 构造兜底ID（部分邮件可能没有 Message-ID）
-                fallback_id = f"{sender}|{subject}|{date}|{content[:64]}"
-                uniq_id = mid or fallback_id
+                    mid = (msg.get("Message-ID") or "").strip()
+                    subject = self._decode_header(msg.get("Subject"))
+                    sender = self._decode_header(msg.get("From"))
+                    date = self._decode_header(msg.get("Date"))
+                    content = self._extract_content(msg)
 
-                if uniq_id in processed_ids:
-                    continue
+                    fallback_id = f"{uid}|{sender}|{subject}|{date}|{content[:64]}"
+                    uniq_id = mid or str(uid) or fallback_id
 
-                results.append({
-                    "id": uniq_id,
-                    "message_id": mid or None,
-                    "from": sender,
-                    "subject": subject or "(No Subject)",
-                    "date": date,
-                    "content": content
-                })
-                new_ids.append(uniq_id)
+                    if uniq_id in processed_ids:
+                        continue
 
-            mail.close()
-            mail.logout()
+                    results.append({
+                        "id": uniq_id,
+                        "message_id": mid or None,
+                        "from": sender,
+                        "subject": subject or "(No Subject)",
+                        "date": date,
+                        "content": content
+                    })
+                    new_ids.append(uniq_id)
 
-            if new_ids:
-                processed_ids.update(new_ids)
-                self._save_state({"processed_ids": list(processed_ids)})
+                if new_ids:
+                    processed_ids.update(new_ids)
+                    self._save_state({"processed_ids": list(processed_ids)})
 
-            return json.dumps({"emails": results}, ensure_ascii=False)
+                return json.dumps({"emails": results}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": f"Failed to read emails: {str(e)}"}, ensure_ascii=False)
 

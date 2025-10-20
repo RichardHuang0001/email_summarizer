@@ -54,7 +54,9 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         return {"status": "no_new_emails", "message": "没有新的待处理邮件"}
 
     # 2) 并行总结
-    llm = ChatOpenAI(model_name=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0)
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+    base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+    llm = ChatOpenAI(model=model_name, temperature=0, base_url=base_url) if base_url else ChatOpenAI(model=model_name, temperature=0)
     summarizer_prompt = get_email_summarizer_prompt()
     summarizer_chain = summarizer_prompt | llm | StrOutputParser()
 

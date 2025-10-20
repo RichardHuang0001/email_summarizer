@@ -1,97 +1,138 @@
-# LLM 邮件自动化
+# LLM 邮件总结器
 
-一个基于 LangChain 的邮件自动化工具：每次运行时读取你的邮箱新邮件（基于 Message-ID 去重），调用大模型进行总结，将汇总内容归档为 Markdown 文档，并将简洁通知邮件（附带归档）发送到目标邮箱。
+[![Python 版本](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![许可证](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## 功能特点
-- 🔄 去重读取：基于 `Message-ID` 记录状态，避免重复处理
-- 🧠 LLM 总结：对每封邮件并行生成结构化总结，聚合为报告
-- 🗂️ 自动归档：将聚合报告持久化到 `archive/` 下的 Markdown 文档
-- ✉️ 邮件发送：自动撰写通知邮件并发送到指定邮箱，支持附件
-- ⚙️ 清晰架构：工具模块化（Reader/Archiver/Sender）+ LCEL 编排
+一个由大型语言模型 (LLM) 驱动的自动化邮件总结工具。该工具可以获取未读邮件，生成简洁的摘要，并将摘要报告发送到指定的电子邮箱。
 
-## 目录结构
-```
-email_summarizer/
-├── archive/                 # 归档文档输出目录
-│   └── .gitkeep
-├── src/                     # 源代码目录
-│   ├── email_summarizer/    # 主要业务逻辑
-│   │   ├── __init__.py
-│   │   ├── chain.py         # LCEL 主流程
-│   │   ├── prompts.py       # Prompt 模板
-│   │   ├── tools/           # EmailReader/Archiver/Sender 工具
-│   │   └── utils/           # 工具函数
-│   └── state/               # 已处理邮件状态
-│       └── processed_emails.json
-├── core/                    # 核心逻辑（旧版本，保留兼容）
-│   ├── __init__.py
-│   ├── chain.py
-│   ├── prompts.py
-│   └── tools.py
-├── scripts/
-│   └── setup_config.py      # 配置向导（生成 .env）
-├── docs/
-│   └── 邮件总结工具使用指南.md
-├── config/
-│   └── .env.example
-├── requirements.txt
-├── main.py                  # 命令行入口
-└── README.md
-```
+## ✨ 功能特点
 
-## 快速开始
-### 1. 安装依赖
+- **📧 自动获取邮件**: 通过 IMAP 连接到您的电子邮件帐户，获取最新的未读邮件。
+- **🤖 AI 驱动的摘要**: 利用 LLM 为您的邮件生成高质量、简洁的摘要。
+- **⚙️ 可自定义配置**: 轻松配置电子邮件帐户、LLM 提供商和通知设置。
+- **📊 每日摘要报告**: 将新邮件的每日摘要发送给指定收件人。
+- **🧩 可扩展和模块化**: 采用模块化架构构建，易于扩展和定制。
+
+## 🚀 快速开始
+
+请按照以下说明在您的本地计算机上设置并运行邮件总结器。
+
+### 📋 环境要求
+
+- Python 3.9+
+- 一个 OpenAI API 密钥
+- 一个启用了 IMAP 的电子邮箱账户
+
+### 🛠️ 安装步骤
+
+1.  **克隆代码仓库:**
+
+    ```bash
+    git clone https://github.com/your-username/email-summarizer.git
+    cd email-summarizer
+    ```
+
+2.  **创建并激活虚拟环境:**
+
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
+
+3.  **安装所需依赖:**
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+### ⚙️ 配置
+
+1.  在项目的根目录下 **创建一个 `.env` 文件**。您可以从示例文件复制：
+
+    ```bash
+    cp config_example/.env.example .env
+    ```
+
+2.  **编辑 `.env` 文件**，填入您的个人配置：
+
+    ```env
+    # OpenAI API 密钥
+    OPENAI_API_KEY="your-openai-api-key"
+
+    # 需要抓取邮件的邮箱账户 (例如, "QQ", "Gmail")
+    EMAIL_USE="QQ"
+
+    # IMAP 服务器配置 (JSON 格式)
+    EMAIL_CONFIGS='''{
+      "QQ": {
+        "imap_server": "imap.qq.com",
+        "imap_user": "your-email@qq.com",
+        "imap_pass": "your-email-password-or-app-token"
+      },
+      "Gmail": {
+        "imap_server": "imap.gmail.com",
+        "imap_user": "your-email@gmail.com",
+        "imap_pass": "your-gmail-app-password"
+      }
+    }'''
+
+    # 摘要邮件的默认接收地址
+    DEFAULT_NOTIFY_TO="recipient@example.com"
+    ```
+
+    **注意:** 为安全起见，建议为您的电子邮箱帐户使用应用专用密码。
+
+## ▶️ 使用方法
+
+要运行邮件总结器，请从根目录执行 `main.py` 脚本：
+
 ```bash
-cd email_summarizer
-pip install -r requirements.txt
+python main.py [OPTIONS]
 ```
 
-### 2. 生成配置（.env）
+### 命令行选项
+
+- `--limit`: 读取新邮件的最大数量 (默认: 20)。
+- `--to`: 接收摘要报告的邮箱地址 (会覆盖 `.env` 文件中的 `DEFAULT_NOTIFY_TO`)。
+- `--subject`: 摘要邮件的主题 (默认: "今日邮件摘要")。
+- `--all`: 读取所有邮件，而不仅仅是未读邮件。
+- `--send-attachment`: 将归档的摘要作为附件发送。
+
+### 示例
+
+获取最近 10 封未读邮件，并将摘要发送到 `test@example.com`：
+
 ```bash
-python scripts/setup_config.py
-```
-- 必填：`OPENAI_API_KEY`、`EMAIL_USE`、`EMAIL_CONFIGS`
-- 可选：`HTTP_PROXY`/`HTTPS_PROXY`
-
-### 3. 运行主流程
-```bash
-python main.py --limit 20 --to someone@example.com --subject "每日邮件总结"
-```
-- `--limit`：读取的新邮件最大数量（默认 20, 范围 1-50）
-- `--to`：通知邮件收件人（必填）
-- `--subject`：通知邮件主题（默认 “邮件每日总结”）
-- `--all`：读取全部邮件（默认仅未读）
-
-## 配置说明
-- `EMAIL_USE` 支持：`QQ`、`163`、`ALIYUN`
-- `EMAIL_CONFIGS` 示例（由向导生成）：
-```json
-{
-  "QQ": {
-    "smtp_host": "smtp.qq.com",
-    "smtp_port": 465,
-    "imap_host": "imap.qq.com",
-    "username": "your@qq.com",
-    "password": "授权码"
-  }
-}
+python main.py --limit 10 --to "test@example.com"
 ```
 
-## 工作流概览
-1. 读取新邮件：`EmailReaderTool` 通过 IMAP 获取未读邮件；使用 `state/processed_emails.json` 记录已处理 ID
-2. 并行总结：`Prompt -> ChatOpenAI -> StrOutputParser` 对每封邮件并发生成摘要
-3. 聚合与归档：整合为 Markdown 报告，`DocumentArchiverTool` 写入 `archive/`
-4. 撰写通知邮件：用聚合报告和归档路径生成简洁正文
-5. 发送邮件：`EmailSenderTool` 通过 SMTP 发送，并附上归档文档
+## 📁 项目结构
 
-## 注意事项
-- 首次运行请确保 `.env` 已配置且邮箱 IMAP/SMTP 已开启
-- `Message-ID` 缺失的邮件将用 (发件人|主题|时间|内容片段) 构造兜底 ID
+```
+.
+├── .gitignore
+├── README.md
+├── archive/            # 归档文件存放目录
+├── config_example/     # 配置文件示例
+├── docs/               # 项目文档
+├── main.py             # 程序主入口
+├── requirements.txt    # 依赖列表
+├── scripts/            # 辅助脚本
+├── src/                # 源代码
+│   ├── attachments/    # 附件目录
+│   └── email_summarizer/ # 核心业务逻辑
+│       ├── __init__.py
+│       ├── chain.py      # 定义了主要的邮件处理和总结流程
+│       ├── prompts.py    # 存放用于 LLM 的提示
+│       ├── tools/        # 工具函数和辅助脚本
+│       └── utils/        # 通用工具函数
+└── tests/              # 测试代码
+```
 
-## 后续优化
-- Prompt 细化与风格控制
-- 归档文件命名策略与分组格式
-- 错误告警与重试机制
+## 🤝 贡献
 
-## OpenRouter网站的免费api模型可以在这个网页查询
-https://openrouter.ai/models/?q=free
+欢迎各种形式的贡献！如果您有任何建议或发现任何错误，请随时提交 Pull Request 或开启一个 Issue。
+
+## 📄 许可证
+
+该项目基于 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。

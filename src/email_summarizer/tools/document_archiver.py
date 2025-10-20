@@ -37,31 +37,81 @@ class DocumentArchiverTool(BaseTool):
         lines = md.splitlines()
         buf: List[str] = []
         in_ul = False
-        for line in lines:
-            if line.startswith("### "):
-                if in_ul:
-                    buf.append("</ul>")
-                    in_ul = False
-                buf.append(f"<h3>{_html.escape(line[4:].strip())}</h3>")
-            elif line.startswith("## "):
-                if in_ul:
-                    buf.append("</ul>")
-                    in_ul = False
-                buf.append(f"<h2>{_html.escape(line[3:].strip())}</h2>")
-            elif line.startswith("- "):
+        in_code = False
+        code_lang = ""
+        code_buf: List[str] = []
+
+        def flush_ul():
+            nonlocal in_ul
+            if in_ul:
+                buf.append("</ul>")
+                in_ul = False
+
+        def flush_code():
+            nonlocal in_code, code_lang, code_buf
+            if not in_code:
+                return
+            content = "\n".join(code_buf)
+            if code_lang.lower() == "html":
+                # 直接插入为原始HTML（用于卡片片段渲染）
+                buf.append(content)
+            else:
+                buf.append("<pre><code>")
+                buf.append(_html.escape(content))
+                buf.append("</code></pre>")
+            in_code = False
+            code_lang = ""
+            code_buf = []
+
+        for raw in lines:
+            line = raw.rstrip("\n")
+            if line.startswith("```"):
+                if in_code:
+                    # 关闭代码块
+                    flush_code()
+                else:
+                    # 开启代码块
+                    flush_ul()
+                    code_lang = line.strip()[3:].strip()
+                    in_code = True
+                    code_buf = []
+                continue
+
+            if in_code:
+                code_buf.append(line)
+                continue
+
+            s = line.strip()
+            if s == "":
+                flush_ul()
+                buf.append("<br/>")
+                continue
+
+            if s == "---":
+                flush_ul()
+                buf.append("<hr/>")
+                continue
+
+            if s.startswith("### "):
+                flush_ul()
+                buf.append(f"<h3>{_html.escape(s[4:].strip())}</h3>")
+            elif s.startswith("## "):
+                flush_ul()
+                buf.append(f"<h2>{_html.escape(s[3:].strip())}</h2>")
+            elif s.startswith("# "):
+                flush_ul()
+                buf.append(f"<h1>{_html.escape(s[2:].strip())}</h1>")
+            elif s.startswith("- "):
                 if not in_ul:
                     buf.append("<ul>")
                     in_ul = True
-                buf.append(f"<li>{_html.escape(line[2:].strip())}</li>")
-            elif line.strip() == "":
-                if in_ul:
-                    buf.append("</ul>")
-                    in_ul = False
-                buf.append("<br/>")
+                buf.append(f"<li>{_html.escape(s[2:].strip())}</li>")
             else:
-                buf.append(f"<p>{_html.escape(line.strip())}</p>")
-        if in_ul:
-            buf.append("</ul>")
+                buf.append(f"<p>{_html.escape(s)}</p>")
+
+        flush_ul()
+        if in_code:
+            flush_code()
         return "\n".join(buf)
 
     def _build_section(self, report_text: str) -> str:

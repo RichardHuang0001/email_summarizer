@@ -9,7 +9,9 @@ import os
 import json
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
-
+import webbrowser
+import threading
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
@@ -264,6 +266,10 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         print("📝 正在组装邮件内容...")
         final_html_body = compose_final_html_body(summary_htmls, archive_path)
 
+        # 并行启动浏览器预览，不影响后续邮件发送
+        if archive_path:
+            threading.Thread(target=_open_html_preview, args=(archive_path,), daemon=True).start()
+
         send_result = _send_email(target_email, subject, final_html_body, archive_path, send_attachment)
 
         if send_result.get("status") == "error":
@@ -308,4 +314,20 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
             "message": f"处理失败: {e}",
             "email_count": len(emails)
         }
+
+
+def _open_html_preview(file_path: Optional[str]) -> None:
+    """在默认浏览器中打开本地HTML预览（不阻塞主流程）"""
+    if not file_path:
+        return
+    try:
+        abs_path = os.path.abspath(file_path)
+        if not os.path.exists(abs_path):
+            print(f"⚠️ 找不到归档文件: {abs_path}")
+            return
+        url = Path(abs_path).resolve().as_uri()
+        print(f"🌐 正在打开浏览器预览: {abs_path}")
+        webbrowser.open(url, new=2)
+    except Exception as e:
+        print(f"⚠️ 打开浏览器预览失败: {e}")
 

@@ -15,10 +15,11 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from email_summarizer.chain import run_pipeline
+from email_summarizer.utils.config import get_email_service_config
 
 load_dotenv()
 
-REQUIRED_VARS = ["OPENAI_API_KEY", "EMAIL_USE", "EMAIL_CONFIGS"]
+REQUIRED_VARS = ["OPENAI_API_KEY", "EMAIL_USE"]
 
 
 def check_config() -> bool:
@@ -27,21 +28,19 @@ def check_config() -> bool:
         print("❌ 配置检查失败！缺少以下环境变量：")
         for v in missing:
             print(f"   - {v}")
-        print("请先运行 scripts/setup_config.py 或在 .env 中填充必要配置。\n")
+        print("请先在 .env 中填充必要配置。\n")
         return False
 
+    # 新的容错配置检查：支持简易变量或 JSON 两种方式
     try:
-        email_configs = json.loads(os.getenv("EMAIL_CONFIGS"))
-        email_use = os.getenv("EMAIL_USE", "QQ").upper()
-        if email_use not in email_configs:
-            print(f"❌ EMAIL_USE={email_use} 不在 EMAIL_CONFIGS 中，请检查配置。")
-            return False
-    except Exception:
-        print("❌ EMAIL_CONFIGS 不是有效的 JSON，请检查 .env 配置。")
+        cfg = get_email_service_config()
+        email_use = os.getenv("EMAIL_USE", "GMAIL").upper()
+        print(f"✅ 配置检查通过！服务: {email_use}，发件人: {cfg['username']}")
+        return True
+    except Exception as e:
+        print(f"❌ 邮箱配置无效：{e}")
+        print("💡 请在 .env 中填写 EMAIL_USERNAME 和 EMAIL_PASSWORD（或 EMAIL_USER/EMAIL_AUTH_CODE），并设置 EMAIL_USE 为 GMAIL/163/QQ/OUTLOOK 之一。")
         return False
-
-    print("✅ 配置检查通过！")
-    return True
 
 
 def parse_args():

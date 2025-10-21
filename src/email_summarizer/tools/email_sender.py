@@ -23,8 +23,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-EMAIL_CONFIGS = json.loads(os.getenv("EMAIL_CONFIGS", "{}") or "{}")
-EMAIL_SERVICE = os.getenv("EMAIL_USE", "GMAIL").upper()
+from ..utils.config import get_email_service_config
 
 
 class SenderInput(BaseModel):
@@ -43,15 +42,12 @@ class EmailSenderTool(BaseTool):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if EMAIL_SERVICE not in EMAIL_CONFIGS:
-            raise ValueError(f"Unsupported email service: {EMAIL_SERVICE}")
-        self._cfg = EMAIL_CONFIGS[EMAIL_SERVICE]
-        self._email = self._cfg["username"]
-        self._auth = self._cfg["password"]
-        self._smtp_host = self._cfg["smtp_host"]
-        # 根据服务商设置默认端口
-        default_port = 465 if "163.com" in self._smtp_host else 587
-        self._smtp_port = int(self._cfg.get("smtp_port", default_port))
+        # 使用容错配置加载器
+        cfg = get_email_service_config()
+        self._email = cfg["username"]
+        self._auth = cfg["password"]
+        self._smtp_host = cfg["smtp_host"]
+        self._smtp_port = int(cfg.get("smtp_port", 587))
 
     def _prepare_message(self, to: str, subject: str, body: str, is_html: bool = False,
                           attachment_path: Optional[str] = None, cc: Optional[str] = None) -> MIMEMultipart:

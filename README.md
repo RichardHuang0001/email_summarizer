@@ -53,7 +53,7 @@
 1.  在项目的根目录下 **创建一个 `.env` 文件**。您可以从示例文件复制：
     执行下面的命令就可以自动完成创建，您只需要打开.env文件并修改即可
     ```bash
-    cp config_example/.env.example .env
+    cp config_example/.env.example ./.env
     ```
 2. **查看项目中config_example文件夹下的.env.example文件**
 3.  **根据.env.example编辑 `.env` 文件**，填入您的个人配置：

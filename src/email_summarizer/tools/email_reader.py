@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from imapclient import IMAPClient, exceptions
 
+from ..utils.config import get_email_service_config
+
 load_dotenv()
 
 # --- 配置常量 ---
@@ -28,9 +30,6 @@ ATTACHMENT_DIR = os.path.join(BASE_DIR, "attachments")
 
 os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
 os.makedirs(ATTACHMENT_DIR, exist_ok=True)
-
-EMAIL_CONFIGS = json.loads(os.getenv("EMAIL_CONFIGS", "{}") or "{}")
-EMAIL_SERVICE = os.getenv("EMAIL_USE", "GMAIL").upper()
 
 ALLOWED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.gif', '.ppt', '.pptx', '.doc', '.docx', '.xls', '.xlsx'}
 BLOCKED_EXTENSIONS = {'.zip', '.rar', '.7z', '.exe', '.sh', '.bat'}
@@ -55,12 +54,12 @@ class EmailReaderTool(BaseTool):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if EMAIL_SERVICE not in EMAIL_CONFIGS:
-            raise ValueError(f"错误: 在 .env 中未找到邮箱服务 '{EMAIL_SERVICE}' 的配置")
-        self._cfg = EMAIL_CONFIGS[EMAIL_SERVICE]
-        self._email = self._cfg["username"]
-        self._auth = self._cfg["password"]
-        self._imap_host = self._cfg["imap_host"]
+        # 使用容错配置加载器
+        cfg = get_email_service_config()
+        self._email = cfg["username"]
+        self._auth = cfg["password"]
+        self._imap_host = cfg["imap_host"]
+        self._service = (cfg.get("service_name") or (os.getenv("EMAIL_USE") or "GMAIL")).upper()
         self._h2t = html2text.HTML2Text()
         self._h2t.ignore_links = True
         self._h2t.ignore_images = True
@@ -193,7 +192,7 @@ class EmailReaderTool(BaseTool):
         new_ids: List[str] = []
 
         folders_to_read = []
-        is_gmail_default = EMAIL_SERVICE == "GMAIL" and folder == "INBOX"
+        is_gmail_default = self._service == "GMAIL" and folder == "INBOX"
         if is_gmail_default:
             print(f"ℹ️ 检测到 Gmail 默认配置，将尝试读取以下分类: {GMAIL_CATEGORY_FOLDERS}")
             folders_to_read = GMAIL_CATEGORY_FOLDERS

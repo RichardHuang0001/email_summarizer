@@ -242,7 +242,7 @@ class EmailReaderTool(BaseTool):
                             continue
 
                         latest_uids_in_folder = sorted(uids, reverse=True)[:max_count]
-                        print(f"📧 在 '{actual_folder_name_decoded}' 找到 {len(uids)} 封，准备处理最新的 {len(latest_uids_in_folder)} 封。")
+                        # print(f"📧 在 '{actual_folder_name_decoded}' 找到 {len(uids)} 封，准备处理最新的 {len(latest_uids_in_folder)} 封。")
 
                         uids_to_process = [uid for uid in latest_uids_in_folder if uid not in processed_uids_in_session]
                         if not uids_to_process:
@@ -255,8 +255,7 @@ class EmailReaderTool(BaseTool):
                         bodystructures_data = client.fetch(uids_to_process, [b'BODYSTRUCTURE'])
 
                         for i, uid in enumerate(uids_to_process, 1):
-                            print(f"  --- 正在处理 '{actual_folder_name_decoded}' 中第 {i}/{len(uids_to_process)} 封 (UID: {uid}) ---")
-                            
+                            # print(f"  --- 正在处理 '{actual_folder_name_decoded}' 中第 {i}/{len(uids_to_process)} 封 (UID: {uid}) ---")
                             envelope = envelopes_data.get(uid, {}).get(b'ENVELOPE')
                             bodystructure_raw = bodystructures_data.get(uid, {}).get(b'BODYSTRUCTURE')
 
@@ -268,7 +267,7 @@ class EmailReaderTool(BaseTool):
                             uniq_id = mid if mid else f"uid-{uid}-{actual_folder_name_decoded}" 
 
                             if uniq_id in processed_ids:
-                                print(f"    - 跳过已处理邮件 (ID: {uniq_id})")
+                                # print(f"    - 跳过已处理邮件 (ID: {uniq_id})")
                                 continue
                             
                             parts_to_fetch = self._get_parts_to_fetch(bodystructure_raw)
@@ -327,6 +326,8 @@ class EmailReaderTool(BaseTool):
                     print(f"\n💾 已更新状态，新增 {len(new_ids)} 个已处理ID。")
 
                 print(f"\n✅ 流程完成，总共成功处理 {len(results)} 封新邮件。")
+                # 新增：输出最终待LLM处理的数量
+                print(f"📧 去重后，待LLM处理 {len(results)} 封邮件。")
                 return json.dumps({"emails": results}, ensure_ascii=False)
                 
         except exceptions.LoginError:

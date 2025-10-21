@@ -96,9 +96,13 @@ def _process_emails_parallel(emails: List[Dict], timer: ProgressTimer) -> List[s
                 summary_htmls[index] = result
                 completed_count += 1
                 
-                if completed_count % 2 == 0 or completed_count == len(contents):
-                    progress = completed_count / len(contents)
-                    print(f"\r✅ 已完成 {completed_count}/{len(contents)} 个总结 ({progress:.0%})", end='', flush=True)
+                # 单行进度更新：每次完成都刷新一行，包含计时器与进度
+                progress = completed_count / len(contents)
+                elapsed = timer.get_elapsed_time()
+                remaining = max(0, timer.timeout_seconds - elapsed)
+                import sys
+                sys.stdout.write(f"\r🔄 LLM处理 {completed_count}/{len(contents)} | 已用 {elapsed:.1f}s / 剩余 {remaining:.1f}s")
+                sys.stdout.flush()
                 
             except Exception as e:
                 error_count += 1

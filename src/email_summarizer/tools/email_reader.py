@@ -201,9 +201,9 @@ class EmailReaderTool(BaseTool):
             print(f"ℹ️ 将读取指定文件夹: {folder}")
 
         try:
-            print(f"🔗 [1/?] 正在连接到 {self._imap_host}...")
+            print(f"🔗 [1/5] 正在连接到 {self._imap_host}...")
             with IMAPClient(self._imap_host, ssl=True, timeout=30) as client:
-                print(f"🔐 [2/?] 正在登录邮箱 {self._email}...")
+                print(f"🔐 [2/5] 正在登录邮箱 {self._email}...")
                 client.login(self._email, self._auth)
 
                 if "163.com" in self._imap_host.lower():
@@ -229,11 +229,11 @@ class EmailReaderTool(BaseTool):
                     actual_folder_name_bytes = all_available_folders[actual_folder_name_decoded]
 
                     try:
-                        print(f"\n📁 [3/?, F:{actual_folder_name_decoded}] 正在选择文件夹 '{actual_folder_name_decoded}'...")
+                        print(f"\n📁 [3/5, F:{actual_folder_name_decoded}] 正在选择文件夹 '{actual_folder_name_decoded}'...")
                         client.select_folder(actual_folder_name_bytes, readonly=True)
 
                         search_criteria = ["UNSEEN"] if use_unseen else ["ALL"]
-                        print(f"🔍 [4/?, F:{actual_folder_name_decoded}] 正在搜索'{'未读' if use_unseen else '所有'}'邮件...")
+                        print(f"🔍 [4/5, F:{actual_folder_name_decoded}] 正在搜索'{"未读" if use_unseen else "所有"}'邮件...")
                         uids = client.search(search_criteria)
                         
                         if not uids:
@@ -248,7 +248,7 @@ class EmailReaderTool(BaseTool):
                             print(f"  - '{actual_folder_name_decoded}' 中的最新邮件已在本会话其他文件夹处理过。")
                             continue
 
-                        print(f"📥 [5/?, F:{actual_folder_name_decoded}] 正在分步获取 {len(uids_to_process)} 封邮件内容...")
+                        print(f"📥 [5/5, F:{actual_folder_name_decoded}] 正在分步获取 {len(uids_to_process)} 封邮件内容...")
                         
                         envelopes_data = client.fetch(uids_to_process, [b'ENVELOPE'])
                         bodystructures_data = client.fetch(uids_to_process, [b'BODYSTRUCTURE'])

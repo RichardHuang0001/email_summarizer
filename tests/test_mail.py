@@ -23,6 +23,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# 兼容 src 布局，允许导入 email_summarizer.*
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src'))
+from email_summarizer.utils.config import get_email_service_config
+
 try:
     from imapclient import IMAPClient
 except Exception:
@@ -45,27 +49,8 @@ FOLDERS_TO_TEST = [
 
 
 def get_service_cfg():
-    """返回完整服务配置"""
-    cfg = json.loads(os.getenv("EMAIL_CONFIGS", "{}") or "{}")
-    svc = os.getenv("EMAIL_USE", "GMAIL").upper()
-    if svc in cfg:
-        c = cfg[svc]
-        c["service_name"] = svc
-        # 确保有默认端口
-        if "smtp_port" not in c:
-            c["smtp_port"] = 465 if "163.com" in c.get("smtp_host", "").lower() else 587
-        return c
-    
-    print(f"❌ 警告：在 .env 中未找到 {svc} 的配置，将使用旧版环境变量。")
-    default_port = 465 if "163.com" in os.getenv("IMAP_HOST", "").lower() else 587
-    return {
-        "imap_host": os.getenv("IMAP_HOST", "imap.gmail.com"),
-        "smtp_host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        "smtp_port": int(os.getenv("SMTP_PORT", str(default_port))),
-        "username": os.getenv("EMAIL_USER") or os.getenv("EMAIL_USERNAME"),
-        "password": os.getenv("EMAIL_AUTH_CODE") or os.getenv("EMAIL_PASSWORD"),
-        "service_name": os.getenv("EMAIL_USE", "UNKNOWN").upper(),
-    }
+    """返回完整服务配置（新的容错加载方式）"""
+    return get_email_service_config()
 
 
 def get_target_email(default_sender: str) -> str:

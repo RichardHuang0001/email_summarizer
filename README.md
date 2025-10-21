@@ -71,6 +71,15 @@ API KEY： 推荐使用Open Router：https://openrouter.ai/ 推荐使用Google�
 
 然后把base url和api key填写到.env文件中，邮箱号和授权码填写到对应的位置
 
+## （建议选择）配置完成后运行测试脚本
+在项目目录里面，先后执行这两条命令，如果都返回成功，那么就十拿九稳了
+```bash
+python tests/test_mail.py
+```
+```bash
+python tests/test_llm.py
+```
+
 ## ▶️ 使用方法
 
 要运行邮件总结器，请从根目录执行 `main.py` 脚本：

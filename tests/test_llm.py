@@ -10,6 +10,9 @@ import os
 import sys
 from dotenv import load_dotenv
 
+# 兼容 src 布局（与主程序一致），不影响测试逻辑
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src'))
+
 
 def main():
     load_dotenv()

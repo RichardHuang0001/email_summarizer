@@ -22,11 +22,9 @@ ENV/
 
 # 本地敏感配置（不追踪真实密钥）
 .env
-.env.*
 .envrc
 config/.env
 config/*.env
-!config/.env.example
 
 # 归档与生成的报告（保留占位文件）
 archive/**

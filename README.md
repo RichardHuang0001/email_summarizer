@@ -20,26 +20,29 @@
 ### 📋 环境要求
 
 - Python 3.9+
-- 一个 OpenAI API 密钥
+- 一个兼容OpenAI API 密钥（下文有推荐的免费获取方式）
 - 一个启用了 IMAP 的电子邮箱账户
+- 本工具在MacOS上开发测试，理论上兼容Windows系统，但可能有些许小问题，请您自行求助AI～
 
 ### 🛠️ 安装步骤
 
 1.  **克隆代码仓库:**
-
+    打开一个终端（macos按cmd+空格打开Spotlight搜索“终端”或者“Terminal”即可）
+    （为了方便建议克隆到home目录,信我的话照着下面的推荐命令执行即可）
     ```bash
-    git clone https://github.com/your-username/email-summarizer.git
-    cd email-summarizer
+    cd ~
+    git clone https://github.com/RichardHuang0001/email_summarizer.git
+    cd email_summarizer
     ```
 
-2.  **创建并激活虚拟环境:**
+1.  **创建并激活虚拟环境（可选，建议不选，嫌麻烦就不用了，不然每次都要手动激活）:**
 
     ```bash
     python3 -m venv venv
     source venv/bin/activate
     ```
 
-3.  **安装所需依赖:**
+2.  **安装所需依赖:**
 
     ```bash
     pip install -r requirements.txt
@@ -48,51 +51,39 @@
 ### ⚙️ 配置
 
 1.  在项目的根目录下 **创建一个 `.env` 文件**。您可以从示例文件复制：
-
+    执行下面的命令就可以自动完成创建，您只需要打开.env文件并修改即可
     ```bash
     cp config_example/.env.example .env
     ```
+2. **查看项目中config_example文件夹下的.env.example文件**
+3.  **根据.env.example编辑 `.env` 文件**，填入您的个人配置：
 
-2.  **编辑 `.env` 文件**，填入您的个人配置：
+    **注意:** 为安全起见，强烈建议为您的电子邮箱帐户使用 **应用专用密码** (Gmail/Outlook) 或 **客户端授权码** (163/QQ)，而不是您的主登录密码。请参考对应邮箱服务商的官方文档获取生成方法。
 
-    ```env
-    # OpenAI API 密钥
-    OPENAI_API_KEY="your-openai-api-key"
+### API Key 和邮箱授权码获取方法
+API KEY： 推荐使用Open Router：https://openrouter.ai/ 推荐使用Google账号注册，从右上角“我的”->“API Keys”获取 API KEY，复制并保存好。每天可以用50次(不太稳定)
+也可以使用deepseek官方的API KEY：https://www.deepseek.cn/，价格大约每次5毛钱
 
-    # 需要抓取邮件的邮箱账户 (例如, "QQ", "Gmail")
-    EMAIL_USE="QQ"
+邮箱授权码： 不同邮箱服务商获取方法不同，推荐使用Gmail（稳定）
+获取方法：
+- Gmail： 右上角点击Google头像-管理您的Google账号-安全性-先启用两步验证（否则弄不了后续）-启用好只有左上角搜索“应用专用密码”-新建一个应用专用密码，把密码复制出来保存好
+- 163/QQ： 从您的 163/QQ 邮箱设置-安全-客户端/IMAP/SMTP授权码，（开启IMAP/SMTP服务），然后新建一个授权码，把授权码复制出来保存好
 
-    # IMAP 服务器配置 (JSON 格式)
-    EMAIL_CONFIGS='''{
-      "QQ": {
-        "imap_server": "imap.qq.com",
-        "imap_user": "your-email@qq.com",
-        "imap_pass": "your-email-password-or-app-token"
-      },
-      "Gmail": {
-        "imap_server": "imap.gmail.com",
-        "imap_user": "your-email@gmail.com",
-        "imap_pass": "your-gmail-app-password"
-      }
-    }'''
-
-    # 摘要邮件的默认接收地址
-    DEFAULT_NOTIFY_TO="recipient@example.com"
-    ```
-
-    **注意:** 为安全起见，建议为您的电子邮箱帐户使用应用专用密码。
+然后把base url和api key填写到.env文件中，邮箱号和授权码填写到对应的位置
 
 ## ▶️ 使用方法
 
 要运行邮件总结器，请从根目录执行 `main.py` 脚本：
 
+如果按照我的推荐放在了home目录，则每次只需要打开终端，执行下面这两条命令
 ```bash
+cd ~/email_summarizer
 python main.py [OPTIONS]
 ```
 
-### 命令行选项
+### 命令行选项(可选)
 
-- `--limit`: 读取新邮件的最大数量 (默认: 20)。
+- `--limit`: 读取新邮件的最大数量 (默认: 10)。建议少点，否则容易崩。
 - `--to`: 接收摘要报告的邮箱地址 (会覆盖 `.env` 文件中的 `DEFAULT_NOTIFY_TO`)。
 - `--subject`: 摘要邮件的主题 (默认: "今日邮件摘要")。
 - `--all`: 读取所有邮件，而不仅仅是未读邮件。

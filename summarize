@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve project root (this script's directory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Pick python3 if available, fallback to python
+PYTHON_BIN="$(command -v python3 || command -v python)"
+
+exec "$PYTHON_BIN" main.py "$@"

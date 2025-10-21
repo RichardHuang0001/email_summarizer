@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 IMAP + SMTP 连通性测试（使用 imapclient + smtplib）
-- 发送 ID 握手
-- 选择 INBOX
-- 搜索 UNSEEN 并读取摘要
-- 可选 APPEND 一封自测邮件
-- 完成测试后，仅发送一封“IMAP 配置验证结果”到默认目标邮箱
+- 兼容 163 和 Gmail
+- 根据服务器类型，选择性发送 ID 握手
+- **详细列出所有可用文件夹**
+- **测试关键文件夹的可访问性**
+- 选择 INBOX, 搜索 UNSEEN, 读取最新邮件
+- 发送包含详细测试结果的报告邮件
 """
 import os
 import json
@@ -15,7 +16,8 @@ import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import decode_header
+from email.header import decode_header, make_header
+from typing import Optional, List, Tuple
 
 from dotenv import load_dotenv
 
@@ -27,20 +29,39 @@ except Exception:
     print("❌ 缺少依赖 imapclient，请先安装：pip install imapclient")
     sys.exit(1)
 
+# --- 常量 ---
+# 文件夹可访问性测试列表
+FOLDERS_TO_TEST = [
+    "INBOX",
+    "[Gmail]/Sent Mail", # Gmail 已发送 (示例)
+    "[Gmail]/Spam",     # Gmail 垃圾邮件 (示例)
+    "[Gmail]/Promotions",# Gmail 推广 (猜测)
+    "[Gmail]/Social Updates", # Gmail 社交 (猜测)
+    "Sent Messages",    # 其他邮箱 已发送 (常见)
+    "Drafts",           # 草稿箱 (常见)
+    "Junk",             # 垃圾邮件 (常见)
+    "Deleted Messages", # 已删除 (常见)
+]
+
 
 def get_service_cfg():
-    """返回完整服务配置（包含 IMAP/SMTP/用户名/授权码）"""
+    """返回完整服务配置"""
     cfg = json.loads(os.getenv("EMAIL_CONFIGS", "{}") or "{}")
-    svc = os.getenv("EMAIL_USE", "QQ").upper()
+    svc = os.getenv("EMAIL_USE", "GMAIL").upper()
     if svc in cfg:
         c = cfg[svc]
         c["service_name"] = svc
+        # 确保有默认端口
+        if "smtp_port" not in c:
+            c["smtp_port"] = 465 if "163.com" in c.get("smtp_host", "").lower() else 587
         return c
-    # 兼容示例中的环境变量
+    
+    print(f"❌ 警告：在 .env 中未找到 {svc} 的配置，将使用旧版环境变量。")
+    default_port = 465 if "163.com" in os.getenv("IMAP_HOST", "").lower() else 587
     return {
-        "imap_host": os.getenv("IMAP_HOST", "imap.163.com"),
-        "smtp_host": os.getenv("SMTP_HOST", "smtp.163.com"),
-        "smtp_port": int(os.getenv("SMTP_PORT", "465")),
+        "imap_host": os.getenv("IMAP_HOST", "imap.gmail.com"),
+        "smtp_host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        "smtp_port": int(os.getenv("SMTP_PORT", str(default_port))),
         "username": os.getenv("EMAIL_USER") or os.getenv("EMAIL_USERNAME"),
         "password": os.getenv("EMAIL_AUTH_CODE") or os.getenv("EMAIL_PASSWORD"),
         "service_name": os.getenv("EMAIL_USE", "UNKNOWN").upper(),
@@ -51,60 +72,51 @@ def get_target_email(default_sender: str) -> str:
     return os.getenv("DEFAULT_NOTIFY_TO") or default_sender
 
 
-def decode_email_subject(subject):
-    """解码邮件标题，处理各种编码格式"""
-    if subject is None:
-        return "无标题"
-    
-    # 如果是bytes类型，先转换为字符串
-    if isinstance(subject, bytes):
-        subject = subject.decode('utf-8', errors='ignore')
-    
-    # 转换为字符串
-    subject_str = str(subject)
-    
-    # 处理编码的标题（如 =?UTF-8?B?...?= 格式）
+def decode_folder_name(folder_bytes: bytes) -> str:
+    """尝试解码IMAP文件夹名称 (通常是UTF7-Modified)"""
     try:
-        decoded_parts = decode_header(subject_str)
-        decoded_subject = ""
-        for part, encoding in decoded_parts:
-            if isinstance(part, bytes):
-                if encoding:
-                    try:
-                        decoded_subject += part.decode(encoding, errors='ignore')
-                    except (UnicodeDecodeError, LookupError):
-                        # 如果指定编码失败，尝试UTF-8
-                        decoded_subject += part.decode('utf-8', errors='ignore')
-                else:
-                    # 没有指定编码，尝试UTF-8
-                    decoded_subject += part.decode('utf-8', errors='ignore')
-            else:
-                decoded_subject += str(part)
-        return decoded_subject.strip()
-    except Exception as e:
-        # 如果解码失败，返回原始字符串
-        return subject_str
+        # IMAP 文件夹名常用 UTF-7 Modified 编码处理非 ASCII 字符
+        return folder_bytes.decode('imap4-utf-7')
+    except Exception:
+        # 解码失败，尝试 UTF-8 或返回原始表示
+        try:
+            return folder_bytes.decode('utf-8', 'ignore')
+        except Exception:
+            return str(folder_bytes)
 
 
-def make_test_message(fr: str, to: str) -> bytes:
-    msg = MIMEMultipart()
-    msg["From"] = fr
-    msg["To"] = to
-    msg["Subject"] = "IMAPClient 自测邮件"
-    msg.attach(MIMEText(f"这是IMAPClient的APPEND自测内容，时间 {datetime.now().isoformat()}", "plain", "utf-8"))
-    return msg.as_bytes()
+def decode_email_subject(value: Optional[bytes]) -> str:
+    """使用 make_header 正确解码邮件头部(bytes -> str)"""
+    if not value: return "无标题"
+    try:
+        if isinstance(value, bytes): value_str = value.decode('utf-8', 'ignore')
+        else: value_str = str(value)
+        header = make_header(decode_header(value_str))
+        return str(header)
+    except Exception:
+        return value.decode('utf-8', 'ignore') if isinstance(value, bytes) else str(value)
 
 
 def send_smtp_mail(smtp_host: str, smtp_port: int, user: str, pwd: str, to: str, subject: str, body: str):
+    """根据端口智能选择 SMTP_SSL 或 STARTTLS 发送邮件"""
     msg = MIMEMultipart()
     msg["From"] = user
     msg["To"] = to
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
-    server = smtplib.SMTP_SSL(smtp_host, smtp_port)
-    server.login(user, pwd)
-    server.sendmail(user, [to], msg.as_string())
-    server.quit()
+    
+    server = None
+    try:
+        if smtp_port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+            server.starttls()
+        server.login(user, pwd)
+        server.sendmail(user, [to], msg.as_string())
+    finally:
+        if server:
+            server.quit()
 
 
 if __name__ == "__main__":
@@ -113,132 +125,127 @@ if __name__ == "__main__":
     to_addr = get_target_email(user)
 
     print("🔎 使用 imapclient 测试 IMAP 连接:")
-    print(f"- host: {host}")
-    print(f"- user: {user}")
-    print(f"- to:   {to_addr}")
+    print(f"--- 服务商: {c.get('service_name','UNKNOWN')}")
+    print(f"--- IMAP 主机: {host}")
+    print(f"--- SMTP 主机: {c.get('smtp_host')}:{c.get('smtp_port', 465)}")
+    print(f"--- 用户名: {user}")
+    print(f"--- 报告发送至: {to_addr}")
 
-    # 汇总日志
-    logs = []
+    logs = [
+        f"服务商: {c.get('service_name','UNKNOWN')}",
+        f"账户: {user}",
+        f"IMAP: {host}",
+        f"SMTP: {c.get('smtp_host')}:{c.get('smtp_port',465)}",
+        f"时间: {datetime.now().isoformat()}",
+        "--- IMAP 测试详情 ---"
+    ]
+    all_folders_found: List[str] = []
 
     try:
-        with IMAPClient(host, ssl=True) as client:
+        with IMAPClient(host, ssl=True, timeout=20) as client:
             client.login(user, pwd)
-            # 发送 ID 握手（imapclient 原生支持）
-            try:
-                id_data = {"name": "email-summarizer", "version": "0.1", "vendor": "TraeAI", "os": "macOS"}
-                resp = client.id_(id_data)
-                print("✅ ID 握手成功:", resp)
-                logs.append("[IMAP] ID 握手：成功")
-            except Exception as e:
-                print("⚠️ ID 握手失败:", e)
-                logs.append(f"[IMAP] ID 握手：失败（{e}）")
+            logs.append("[登录]: 成功")
+            
+            # 兼容性 ID 握手
+            if "163.com" in host.lower():
+                try:
+                    client.id_({"name": "imap-test-script"})
+                    logs.append("[ID 握手 (163)]: 成功")
+                except Exception as e:
+                    logs.append(f"[ID 握手 (163)]: 失败 ({e})")
+            else:
+                logs.append("[ID 握手]: 跳过 (非163)")
 
-            # 列出文件夹
+            # **【增强】列出所有文件夹**
+            logs.append("\n--- 可用文件夹列表 ---")
             try:
-                folders = client.list_folders()
-                folder_names = [f[2] for f in folders]
-                print("📁 文件夹:", folder_names)
-                logs.append(f"[IMAP] 文件夹：{folder_names}")
+                folders_raw: List[Tuple[Tuple[bytes, ...], bytes, bytes]] = client.list_folders()
+                if folders_raw:
+                    for flags, delimiter, name_bytes in folders_raw:
+                        name = decode_folder_name(name_bytes)
+                        all_folders_found.append(name)
+                        logs.append(f"- {name} (原始: {name_bytes}, 分隔符: {delimiter}, 标志: {flags})")
+                else:
+                    logs.append("- 未找到任何文件夹")
+                print(f"📁 找到 {len(all_folders_found)} 个文件夹 (详情见报告邮件)")
             except Exception as e:
-                print("⚠️ 列出文件夹失败:", e)
-                logs.append(f"[IMAP] 列出文件夹：失败（{e}）")
+                print(f"⚠️ 列出文件夹失败: {e}")
+                logs.append(f"[错误] 列出文件夹失败: {e}")
+            logs.append("--- 文件夹列表结束 ---")
 
-            # 选择 INBOX（优先只读）
+            # **【新增】测试文件夹可访问性**
+            logs.append("\n--- 文件夹可访问性测试 ---")
+            print("\n🔬 正在测试关键文件夹的可访问性...")
+            for folder_to_test in FOLDERS_TO_TEST:
+                # 只测试实际存在的文件夹
+                actual_name_to_test = next((f for f in all_folders_found if f.lower() == folder_to_test.lower()), None)
+                if actual_name_to_test:
+                    try:
+                        # 尝试以只读方式选择
+                        client.select_folder(actual_name_to_test, readonly=True)
+                        logs.append(f"[选择测试] '{actual_name_to_test}': ✅ 可访问 (只读)")
+                        print(f"  - '{actual_name_to_test}': ✅ 可访问")
+                    except Exception as e:
+                        logs.append(f"[选择测试] '{actual_name_to_test}': ❌ 失败 ({e})")
+                        print(f"  - '{actual_name_to_test}': ❌ 失败 ({e})")
+                else:
+                    logs.append(f"[选择测试] '{folder_to_test}': ❓ 不存在")
+                    # print(f"  - '{folder_to_test}': ❓ 不存在") # 可选：减少控制台输出
+            logs.append("--- 文件夹测试结束 ---")
+
+            # 选择 INBOX (必要步骤)
             try:
                 client.select_folder("INBOX", readonly=True)
-                print("✅ 已选择 INBOX (readonly)")
-                logs.append("[IMAP] 选择 INBOX：只读成功")
+                logs.append("\n[选择 INBOX]: ✅ 成功 (只读)")
             except Exception as e:
-                print("⚠️ EXAMINE 失败，尝试 SELECT:", e)
-                logs.append(f"[IMAP] EXAMINE 失败（{e}），改为读写")
+                logs.append(f"\n[选择 INBOX]: ❌ EXAMINE 失败 ({e}), 尝试读写")
                 client.select_folder("INBOX", readonly=False)
-                print("✅ 已选择 INBOX (readwrite)")
-                logs.append("[IMAP] 选择 INBOX：读写成功")
+                logs.append("[选择 INBOX]: ✅ 成功 (读写)")
 
             # 搜索未读
             try:
-                uids = client.search(["UNSEEN"])  # 使用 UID 模式
-                print(f"📬 未读UID数量: {len(uids)}")
-                logs.append(f"[IMAP] 未读数量：{len(uids)}")
-                if uids:
-                    # 读取少量摘要字段
-                    fetch_data = client.fetch(uids[:5], [b'ENVELOPE'])
-                    for uid, data in fetch_data.items():
-                        env = data.get(b'ENVELOPE')
-                        subject = decode_email_subject(env.subject)
-                        print(f"  - UID={uid} subject={subject}")
+                uids = client.search(["UNSEEN"])
+                logs.append(f"[搜索未读]: ✅ 成功, 数量 {len(uids)}")
             except Exception as e:
-                print("❌ 搜索/读取失败:", e)
-                logs.append(f"[IMAP] 搜索/读取：失败（{e}）")
+                logs.append(f"[搜索未读]: ❌ 失败 ({e})")
 
-            # 读取最近一封邮件并打印标题
+            # 读取最近一封邮件
+            logs.append("\n--- 最新邮件测试 ---")
             try:
-                print("\n📧 正在读取最近一封邮件...")
-                # 搜索所有邮件，按日期排序获取最新的
                 all_uids = client.search(["ALL"])
                 if all_uids:
-                    # 获取最后一个UID（最新的邮件）
                     latest_uid = all_uids[-1]
-                    print(f"📮 最新邮件UID: {latest_uid}")
-                    
-                    # 获取邮件的ENVELOPE信息（包含标题、发件人、日期等）
                     fetch_data = client.fetch([latest_uid], [b'ENVELOPE', b'INTERNALDATE'])
-                    
                     if latest_uid in fetch_data:
-                        data = fetch_data[latest_uid]
-                        env = data.get(b'ENVELOPE')
-                        internal_date = data.get(b'INTERNALDATE')
-                        
-                        # 解码并打印邮件信息
+                        env = fetch_data[latest_uid][b'ENVELOPE']
+                        internal_date = fetch_data[latest_uid][b'INTERNALDATE']
                         subject = decode_email_subject(env.subject)
-                        sender = env.from_[0] if env.from_ else None
-                        sender_name = decode_email_subject(sender.name) if sender and sender.name else "未知发件人"
-                        sender_email = sender.mailbox.decode() + "@" + sender.host.decode() if sender else "未知邮箱"
-                        
-                        print(f"✅ 最新邮件信息:")
-                        print(f"   📝 标题: {subject}")
-                        print(f"   👤 发件人: {sender_name} <{sender_email}>")
-                        print(f"   📅 日期: {internal_date}")
-                        
-                        logs.append(f"[IMAP] 最新邮件读取：成功，标题='{subject}'")
+                        logs.append(f"[最新邮件]: ✅ 成功读取 (UID: {latest_uid}, 主题: '{subject}')")
+                        # 可以在这里添加更多详情到日志
                     else:
-                        print("⚠️ 无法获取最新邮件详情")
-                        logs.append("[IMAP] 最新邮件读取：获取详情失败")
+                        logs.append("[最新邮件]: ❌ 获取详情失败")
                 else:
-                    print("📭 邮箱中没有邮件")
-                    logs.append("[IMAP] 最新邮件读取：邮箱为空")
+                    logs.append("[最新邮件]: 邮箱为空")
             except Exception as e:
-                print(f"❌ 读取最新邮件失败: {e}")
-                logs.append(f"[IMAP] 最新邮件读取：失败（{e}）")
+                logs.append(f"[最新邮件]: ❌ 读取失败 ({e})")
 
-            # 附加一封测试邮件（不会对外发送，仅验证 APPEND）
-            try:
-                payload = make_test_message(user, user)
-                client.append("INBOX", payload, flags=[b'\\Seen'])
-                print("➕ 已追加一封自测邮件到 INBOX")
-                logs.append("[IMAP] APPEND 自测：成功")
-            except Exception as e:
-                print("⚠️ 追加失败:", e)
-                logs.append(f"[IMAP] APPEND 自测：失败（{e}）")
     except Exception as e:
-        print(f"❌ 登录或操作失败: {e}")
-        logs.append(f"[IMAP] 登录/操作：失败（{e}）")
-        # 仍然推送结论，便于用户知晓
+        print(f"❌ IMAP 流程失败: {e}")
+        logs.append(f"\n[严重错误] IMAP 流程失败: {e}")
 
-    # 发送唯一的“IMAP 配置验证结果”邮件
+    # 发送测试报告邮件
     try:
-        header = (
-            "如果你收到了这封邮件，说明当前 IMAP 邮箱配置已可用。\n"
-            f"服务商: {c.get('service_name','UNKNOWN')}\n"
-            f"账户: {user}\n"
-            f"IMAP: {c.get('imap_host')}  SMTP: {c.get('smtp_host')}:{c.get('smtp_port',465)}\n"
-        )
-        report = header + "\nIMAP 测试结论如下：\n" + "\n".join(logs) + f"\n\n时间：{datetime.now().isoformat()}"
+        report = "\n".join(logs)
+        print("\n📤 正在发送测试报告...")
         send_smtp_mail(c["smtp_host"], c.get("smtp_port", 465), user, pwd, to_addr,
-                       "IMAP 配置验证结果", report)
-        print("📤 已发送 IMAP 配置验证结果到目标邮箱")
+                       f"✅ IMAP/SMTP 测试报告 - {c.get('service_name','UNKNOWN')}", report)
+        print("✅ 测试报告已发送。")
     except Exception as e:
-        print("❌ 发送验证结果失败:", e)
+        print(f"❌ 发送测试报告失败: {e}")
+        logs.append(f"\n[严重错误] 发送报告失败: {e}")
+        # 即使报告发送失败，也尝试打印日志
+        print("\n--- 完整测试日志 ---")
+        print("\n".join(logs))
         sys.exit(2)
 
-    print("✅ 测试完成。")
+    print("🎉 测试完成。请检查您的目标邮箱获取详细报告。")

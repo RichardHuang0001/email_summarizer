@@ -40,3 +40,5 @@ src/state/
 # 本地命令文件
 command.txt
 commands.txt
+
+.vscode/

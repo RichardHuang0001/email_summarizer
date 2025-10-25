@@ -45,7 +45,7 @@ def check_config() -> bool:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LLM 邮件自动化")
-    parser.add_argument("--limit", type=int, default=10, help="读取新邮件最大数量 (1-50)")
+    parser.add_argument("--limit", type=int, default=20, help="读取新邮件最大数量 (1-50)")
     parser.add_argument("--to", type=str, default=os.getenv("DEFAULT_NOTIFY_TO"), help="总结通知的目标邮箱地址（默认读取环境变量 DEFAULT_NOTIFY_TO）")
     parser.add_argument("--subject", type=str, default="今日邮件摘要", help="通知邮件主题")
     parser.add_argument("--all", action="store_true", help="读取所有邮件而非仅未读")

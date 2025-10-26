@@ -5,6 +5,7 @@ HTML模板工具函数
 """
 import re # 添加 re 模块导入
 from typing import List, Optional, Dict
+import html as _html
 
 
 # --- 【新增】提取星级评分的辅助函数 ---
@@ -32,17 +33,26 @@ def _extract_rating_from_html(html_snippet: str) -> int:
         return 0 # 解析出错
 # --- 提取星级函数结束 ---
 
-# --- 【新增】在卡片标题下插入时间行 ---
-def _inject_timestamp_into_card(card_html: str, timestamp: Optional[str]) -> str:
+# --- 【新增】在卡片标题下插入时间+发件人（同一行） ---
+def _inject_meta_line(card_html: str, timestamp: Optional[str], sender: Optional[str]) -> str:
     if not card_html or not timestamp:
         return card_html
     # 避免重复插入
     if '时间:' in card_html:
         return card_html
-    time_line = f'<p style="margin: 4px 0 0 0; padding: 0; font-size: 13px; color: #666666;">时间: {timestamp}</p>'
+    safe_ts = _html.escape(timestamp)
+    safe_sender = _html.escape(sender or '')
+    # 同一行右侧显示发件人，紧凑排版
+    meta_line = (
+        '<p style="margin: 4px 0 0 0; padding: 0; font-size: 13px; color: #666666;">'
+        f'时间: {safe_ts}'
+        '<span style="float: right; color: #666666; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">发件人: '
+        f'{safe_sender}</span>'
+        '</p>'
+    )
     try:
-        # 将时间行插入到卡片的第一个 </p>（标题段落）之后
-        return re.sub(r'(</p>)', r'\1' + time_line, card_html, count=1)
+        # 将信息行插入到卡片的第一个 </p>（标题段落）之后
+        return re.sub(r'(</p>)', r'\\1' + meta_line, card_html, count=1)
     except Exception:
         return card_html
 
@@ -57,7 +67,7 @@ def compose_final_html_body(summary_htmls: List[str], archive_path: Optional[str
     if emails_meta:
         injected_cards: List[str] = []
         for card, meta in zip(summary_htmls, emails_meta):
-            injected_cards.append(_inject_timestamp_into_card(card, (meta or {}).get('date')))
+            injected_cards.append(_inject_meta_line(card, (meta or {}).get('date'), (meta or {}).get('from')))
         # 处理长度不匹配的剩余卡片
         if len(summary_htmls) > len(injected_cards):
             injected_cards.extend(summary_htmls[len(injected_cards):])

@@ -4,7 +4,7 @@
 HTML模板工具函数
 """
 import re # 添加 re 模块导入
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 
 # --- 【新增】提取星级评分的辅助函数 ---
@@ -32,15 +32,42 @@ def _extract_rating_from_html(html_snippet: str) -> int:
         return 0 # 解析出错
 # --- 提取星级函数结束 ---
 
+# --- 【新增】在卡片标题下插入时间行 ---
+def _inject_timestamp_into_card(card_html: str, timestamp: Optional[str]) -> str:
+    if not card_html or not timestamp:
+        return card_html
+    # 避免重复插入
+    if '时间:' in card_html:
+        return card_html
+    time_line = f'<p style="margin: 4px 0 0 0; padding: 0; font-size: 13px; color: #666666;">时间: {timestamp}</p>'
+    try:
+        # 将时间行插入到卡片的第一个 </p>（标题段落）之后
+        return re.sub(r'(</p>)', r'\1' + time_line, card_html, count=1)
+    except Exception:
+        return card_html
 
-def compose_final_html_body(summary_htmls: List[str], archive_path: Optional[str]) -> str:
+
+def compose_final_html_body(summary_htmls: List[str], archive_path: Optional[str], emails_meta: Optional[List[Dict]] = None) -> str:
     """
     【修改】将每封邮件的HTML卡片按星级排序后，组装成一封完整的、适合手机阅读的HTML邮件。
+    现在支持在卡片标题下方插入原邮件时间（不依赖LLM）。
     """
-    # --- 【新增排序逻辑】 ---
-    # 使用 _extract_rating_from_html 作为排序的 key，降序排列 (reverse=True)
+    # --- 【新增：时间插入】 ---
+    working_cards: List[str]
+    if emails_meta:
+        injected_cards: List[str] = []
+        for card, meta in zip(summary_htmls, emails_meta):
+            injected_cards.append(_inject_timestamp_into_card(card, (meta or {}).get('date')))
+        # 处理长度不匹配的剩余卡片
+        if len(summary_htmls) > len(injected_cards):
+            injected_cards.extend(summary_htmls[len(injected_cards):])
+        working_cards = injected_cards
+    else:
+        working_cards = summary_htmls
+
+    # --- 【排序逻辑】 ---
     try:
-        valid_summaries = [s for s in summary_htmls if s] # 过滤掉可能的 None 值
+        valid_summaries = [s for s in working_cards if s] # 过滤掉可能的 None 值
         sorted_summary_htmls = sorted(
             valid_summaries,
             key=_extract_rating_from_html,
@@ -48,7 +75,7 @@ def compose_final_html_body(summary_htmls: List[str], archive_path: Optional[str
         )
     except Exception as e:
         print(f"⚠️ 邮件摘要排序失败: {e}。将按原顺序显示。")
-        sorted_summary_htmls = [s for s in summary_htmls if s] # 出错时恢复原顺序
+        sorted_summary_htmls = [s for s in working_cards if s] # 出错时恢复原顺序
     # --- 排序逻辑结束 ---
 
     # 将排序后的HTML卡片片段连接起来

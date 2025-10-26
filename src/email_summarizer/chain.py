@@ -234,7 +234,7 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         # --- 【核心逻辑修改】 ---
         # 1. 组装最终的HTML邮件正文。我们暂时不传入归档路径，因为还不知道
         print("📝 正在组装邮件内容...")
-        final_html_body = compose_final_html_body(summary_htmls, None)
+        final_html_body = compose_final_html_body(summary_htmls, None, emails)
 
         # 2. 将这份完整的HTML内容保存到文件，并获取路径
         archive_path = _save_archive_and_get_path(final_html_body)
@@ -242,7 +242,7 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         # 3. (可选) 如果需要，可以将归档路径回填到HTML中（用于邮件）
         #    这一步是可选的，因为邮件附件本身就是一种链接
         if archive_path and send_attachment:
-             final_html_body = compose_final_html_body(summary_htmls, os.path.basename(archive_path))
+             final_html_body = compose_final_html_body(summary_htmls, os.path.basename(archive_path), emails)
 
         # 4. 启动浏览器预览
         if archive_path:
@@ -256,7 +256,7 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
             print("🔄 正在恢复邮件为未处理状态...")
             mark_emails_as_unprocessed(emails)
             return { "status": "send_failed", "error": send_result.get("error", "邮件发送失败"), "email_count": len(emails) }
-        
+
         print("\n🎉 流程执行成功！")
         return {
             "status": "sent", "to": target_email, "subject": subject,

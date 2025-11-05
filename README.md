@@ -11,7 +11,7 @@
 - **🤖 AI 驱动的摘要**: 利用 LLM 为您的邮件生成高质量、简洁的摘要。
 - **⚙️ 可自定义配置**: 轻松配置电子邮件帐户、LLM 提供商和通知设置。
 - **✅ 一期功能已上线**
-- **🗓️ 二期功能规划中**: 一键配置成定时任务，每日/一定间隔时间自动触发；优化分类和评级能力
+- **🗓️ 二期功能规划中**: 一键配置成定时任务，每日/一定间隔时间自动触发；优化分类和评级能力 
 
   
 ## 需求及最佳实践建议
@@ -98,6 +98,15 @@ python tests/test_llm.py
 cd ~/email_summarizer
 python main.py [OPTIONS]
 ```
+
+## 懒人包（配置为在终端任何位置输入email即可运行）
+适用于MacOS
+复制下面这个代码块，粘贴到终端，然后回车
+执行成功后，关闭终端重新打开即可输入email执行脚本
+```zsh
+ALIAS_DEFINITION="alias email='python ~/email_summarizer/main.py'"; ZSHRC_PATH="$HOME/.zshrc"; if [ -f "$ZSHRC_PATH" ]; then grep -Fxq -- "$ALIAS_DEFINITION" "$ZSHRC_PATH" || { echo "" >> "$ZSHRC_PATH"; echo "# Alias for Email Summarizer (added automatically)" >> "$ZSHRC_PATH"; echo "$ALIAS_DEFINITION" >> "$ZSHRC_PATH"; echo "✅ 成功添加别名 'email' 到 $ZSHRC_PATH"; echo "👉 请重启终端或运行 'source ~/.zshrc'"; }; else echo "$ALIAS_DEFINITION" > "$ZSHRC_PATH"; echo "✅ 创建了 $ZSHRC_PATH 并添加了别名 'email'"; echo "👉 请重启终端或运行 'source ~/.zshrc'"; fi; unset ALIAS_DEFINITION ZSHRC_PATH
+```
+如果出现类似 permission denied之类的权限问题，请求助AI，让他帮忙检查.zshrc文件的权限，把这个权限配置成你自己的用户权限
 
 ### 命令行选项(可选)
 

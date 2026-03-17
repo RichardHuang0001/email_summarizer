@@ -184,6 +184,40 @@ class EmailReaderTool(BaseTool):
 
         return parts_to_fetch
 
+    @staticmethod
+    def _fetch_with_fallback(client: IMAPClient, uids: List[int], data_items: List[bytes], context: str) -> Dict[int, Dict[bytes, Any]]:
+        """
+        兼容性拉取：优先批量 fetch，若触发 IMAPClient 的 marked section 断言错误，
+        自动降级为逐封 fetch，尽量保证其余邮件可继续处理。
+        """
+        if not uids or not data_items:
+            return {}
+
+        try:
+            return client.fetch(uids, data_items)
+        except AssertionError as e:
+            msg = str(e)
+            is_marked_section_error = "unknown status keyword" in msg and "marked section" in msg
+            if not is_marked_section_error:
+                raise
+
+            print(f"⚠️ 检测到 IMAP 返回兼容性问题 ({context})，将降级为逐封拉取: {e}")
+            recovered: Dict[int, Dict[bytes, Any]] = {}
+
+            for uid in uids:
+                try:
+                    single = client.fetch([uid], data_items)
+                    if uid in single:
+                        recovered[uid] = single[uid]
+                except AssertionError as single_e:
+                    single_msg = str(single_e)
+                    if "unknown status keyword" in single_msg and "marked section" in single_msg:
+                        print(f"⚠️ 跳过无法解析的邮件 UID={uid} ({context}): {single_e}")
+                        continue
+                    raise
+
+            return recovered
+
     def _run(self, max_count: int = 20, folder: str = "INBOX", use_unseen: bool = True) -> str:
         max_count = max(1, min(50, int(max_count)))
         state = self._load_state()
@@ -250,8 +284,8 @@ class EmailReaderTool(BaseTool):
 
                         print(f"📥 [5/5, F:{actual_folder_name_decoded}] 正在分步获取 {len(uids_to_process)} 封邮件内容...")
                         
-                        envelopes_data = client.fetch(uids_to_process, [b'ENVELOPE'])
-                        bodystructures_data = client.fetch(uids_to_process, [b'BODYSTRUCTURE'])
+                        envelopes_data = self._fetch_with_fallback(client, uids_to_process, [b'ENVELOPE'], f"{actual_folder_name_decoded}/ENVELOPE")
+                        bodystructures_data = self._fetch_with_fallback(client, uids_to_process, [b'BODYSTRUCTURE'], f"{actual_folder_name_decoded}/BODYSTRUCTURE")
 
                         for i, uid in enumerate(uids_to_process, 1):
                             # print(f"  --- 正在处理 '{actual_folder_name_decoded}' 中第 {i}/{len(uids_to_process)} 封 (UID: {uid}) ---")
@@ -276,7 +310,7 @@ class EmailReaderTool(BaseTool):
                             plain_text, html_text, saved_attachments = "", "", []
                             
                             if fetch_query:
-                                parts_data = client.fetch([uid], fetch_query).get(uid, {})
+                                parts_data = self._fetch_with_fallback(client, [uid], fetch_query, f"{actual_folder_name_decoded}/BODY uid={uid}").get(uid, {})
                                 
                                 for part_id in parts_to_fetch["body"]:
                                     part_content = parts_data.get(f'BODY[{part_id}]'.encode(), b'').decode('utf-8', 'ignore')
@@ -295,7 +329,7 @@ class EmailReaderTool(BaseTool):
                                         with open(filepath, 'wb') as f: f.write(attachment_bytes)
                                         saved_attachments.append(filepath)
 
-                            content = plain_text.strip() or self._h2t.handle(html_text).strip()
+                            content = plain_text.strip() or self._safe_html_to_text(html_text)
                             sender_info = envelope.from_[0] if envelope.from_ else None
                             sender = "未知发件人"
                             if sender_info and sender_info.mailbox and sender_info.host:
@@ -337,3 +371,20 @@ class EmailReaderTool(BaseTool):
             error_msg = f"邮件读取过程中发生未知错误: {type(e).__name__} - {e}"
             print(f"❌ {error_msg}")
             return json.dumps({"error": error_msg}, ensure_ascii=False)
+
+    def _safe_html_to_text(self, html_text: str) -> str:
+        """将 HTML 转文本并兼容畸形邮件片段（如孤立 <![endif]）。"""
+        if not html_text:
+            return ""
+
+        try:
+            return self._h2t.handle(html_text).strip()
+        except AssertionError:
+            # 某些邮件（尤其是 Outlook 条件注释残片）会触发 html.parser 的 marked section 断言。
+            cleaned = re.sub(r"<!--\[if.*?<!\[endif\]-->", " ", html_text, flags=re.IGNORECASE | re.DOTALL)
+            cleaned = re.sub(r"<!\[[^\]]*\]>", " ", cleaned)
+            try:
+                return self._h2t.handle(cleaned).strip()
+            except Exception:
+                plain_fallback = re.sub(r"<[^>]+>", " ", cleaned)
+                return re.sub(r"\s+", " ", plain_fallback).strip()

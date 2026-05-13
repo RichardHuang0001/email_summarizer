@@ -6,6 +6,7 @@ email_sender.py. : 通过 SMTP 发送邮件，支持 HTML/附件/抄送（带重
 import os
 import json
 import smtplib
+import ssl
 from typing import Optional, Type
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -82,16 +83,19 @@ class EmailSenderTool(BaseTool):
             
             # --- 【核心修改】 ---
             # 根据端口号，智能选择 SMTP_SSL (465) 或 STARTTLS (587)
+            ssl_context = ssl.create_default_context()
             if self._smtp_port == 465:
                 print(f"  - [SMTP] 使用 SMTP_SSL (端口 {self._smtp_port}) 连接...")
-                with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30) as server:
+                with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl_context) as server:
                     server.login(self._email, self._auth)
                     to_addrs = [to] + ([cc] if cc else [])
                     server.sendmail(self._email, to_addrs, msg.as_string())
             else:
                 print(f"  - [SMTP] 使用 STARTTLS (端口 {self._smtp_port}) 连接...")
                 with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30) as server:
-                    server.starttls()
+                    server.ehlo()
+                    server.starttls(context=ssl_context)
+                    server.ehlo()
                     server.login(self._email, self._auth)
                     to_addrs = [to] + ([cc] if cc else [])
                     server.sendmail(self._email, to_addrs, msg.as_string())

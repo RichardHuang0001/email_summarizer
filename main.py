@@ -67,8 +67,13 @@ def main():
 
     result = run_pipeline(limit=args.limit, target_email=args.to, subject=args.subject, use_unseen=(not args.all), send_attachment=args.send_attachment)
 
-    if result.get("status") == "sent":
-        print("\n🎉 总结邮件已发送！")
+    if result.get("status") in ("sent", "partial"):
+        if result["status"] == "sent":
+            print("\n🎉 总结邮件已发送！")
+        else:
+            print(f"\n✅ 邮件总结已完成！（{result.get('warning', '')}）")
+            if result.get("send_error"):
+                print(f"⚠️ 发送失败原因: {result['send_error']}")
         print(f"- 收件人: {result['to']}")
         print(f"- 主题: {result['subject']}")
         print(f"- 归档文件: {result['archive_path']}")

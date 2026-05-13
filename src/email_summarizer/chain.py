@@ -30,6 +30,8 @@ from .utils.progress import ProgressTimer
 
 load_dotenv()
 
+MAX_LLM_EMAILS = 20
+
 
 def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
     """
@@ -224,6 +226,10 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         if not emails:
             return {"status": "no_new_emails", "message": "没有新的待处理邮件"}
 
+        if len(emails) > MAX_LLM_EMAILS:
+            print(f"📊 邮件数量 ({len(emails)}) 超过单次处理上限 ({MAX_LLM_EMAILS})，仅处理最近 {MAX_LLM_EMAILS} 封")
+            emails = emails[:MAX_LLM_EMAILS]
+
         summary_htmls = _process_emails_parallel(emails, timer)
         if not summary_htmls:
              # 如果所有总结都失败，则没有内容可发送或归档
@@ -252,10 +258,15 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         send_result = _send_email(target_email, subject, final_html_body, archive_path, send_attachment)
 
         if send_result.get("status") == "error":
-            print(f"❌ 邮件发送失败: {send_result.get('error', '未知错误')}")
-            print("🔄 正在恢复邮件为未处理状态...")
-            mark_emails_as_unprocessed(emails)
-            return { "status": "send_failed", "error": send_result.get("error", "邮件发送失败"), "email_count": len(emails) }
+            error_detail = send_result.get("error", "未知错误")
+            print(f"⚠️ 邮件推送失败（但总结已完成）: {error_detail}")
+            print(f"📄 HTML 归档文件已保存，可手动查看: {archive_path}")
+            return {
+                "status": "partial", "to": target_email, "subject": subject,
+                "archive_path": archive_path, "email_count": len(emails),
+                "warning": "邮件推送失败，但总结归档已生成",
+                "send_error": error_detail
+            }
 
         print("\n🎉 流程执行成功！")
         return {

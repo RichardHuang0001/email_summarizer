@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-email_sender.py. : 通过 SMTP 发送邮件，支持 HTML/附件/抄送（带重试和智能连接）
+email_sender.py : 通过 SMTP 发送邮件，支持 HTML/附件/抄送（带重试和智能连接）
 """
 import os
 import json
@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 from ..utils.config import get_email_service_config
+from ..utils.console import Console
 
 
 class SenderInput(BaseModel):
@@ -43,7 +44,6 @@ class EmailSenderTool(BaseTool):
 
     def __init__(self, **data):
         super().__init__(**data)
-        # 使用容错配置加载器
         cfg = get_email_service_config()
         self._email = cfg["username"]
         self._auth = cfg["password"]
@@ -78,20 +78,18 @@ class EmailSenderTool(BaseTool):
     def _run(self, to: str, subject: str, body: str, is_html: bool = False, attachment_path: Optional[str] = None, cc: Optional[str] = None) -> str:
         try:
             msg = self._prepare_message(to, subject, body, is_html=is_html, attachment_path=attachment_path, cc=cc)
-            
-            print("  - [SMTP] 正在尝试发送邮件...")
-            
-            # --- 【核心修改】 ---
-            # 根据端口号，智能选择 SMTP_SSL (465) 或 STARTTLS (587)
+
+            Console.step_info("连接 SMTP 服务器...")
+
             ssl_context = ssl.create_default_context()
             if self._smtp_port == 465:
-                print(f"  - [SMTP] 使用 SMTP_SSL (端口 {self._smtp_port}) 连接...")
+                Console.step_info(f"SMTP_SSL (端口 {self._smtp_port})")
                 with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl_context) as server:
                     server.login(self._email, self._auth)
                     to_addrs = [to] + ([cc] if cc else [])
                     server.sendmail(self._email, to_addrs, msg.as_string())
             else:
-                print(f"  - [SMTP] 使用 STARTTLS (端口 {self._smtp_port}) 连接...")
+                Console.step_info(f"STARTTLS (端口 {self._smtp_port})")
                 with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30) as server:
                     server.ehlo()
                     server.starttls(context=ssl_context)
@@ -99,12 +97,9 @@ class EmailSenderTool(BaseTool):
                     server.login(self._email, self._auth)
                     to_addrs = [to] + ([cc] if cc else [])
                     server.sendmail(self._email, to_addrs, msg.as_string())
-            
-            print("  - [SMTP] 邮件发送成功！")
+
             return json.dumps({"status": "sent", "to": to, "subject": subject}, ensure_ascii=False)
-        
+
         except Exception as e:
-            print(f"  - [SMTP] 邮件发送失败，准备重试... 错误: {e}")
+            Console.step_warn(f"发送失败，准备重试 ({e})")
             raise e
-
-

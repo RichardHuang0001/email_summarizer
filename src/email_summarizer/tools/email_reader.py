@@ -19,6 +19,7 @@ from langchain.tools import BaseTool
 from imapclient import IMAPClient, exceptions
 
 from ..utils.config import get_email_service_config
+from ..utils.console import Console
 
 load_dotenv()
 
@@ -54,7 +55,6 @@ class EmailReaderTool(BaseTool):
 
     def __init__(self, **data):
         super().__init__(**data)
-        # 使用容错配置加载器
         cfg = get_email_service_config()
         self._email = cfg["username"]
         self._auth = cfg["password"]
@@ -80,20 +80,15 @@ class EmailReaderTool(BaseTool):
         with open(STATE_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
 
-    # --- 【修复】添加缺失的 decode_folder_name 静态方法 ---
     @staticmethod
     def decode_folder_name(folder_bytes: bytes) -> str:
-        """尝试解码IMAP文件夹名称 (通常是UTF7-Modified)"""
         try:
-            # IMAP 文件夹名常用 UTF-7 Modified 编码处理非 ASCII 字符
             return folder_bytes.decode('imap4-utf-7')
         except Exception:
-            # 解码失败，尝试 UTF-8 或返回原始表示
             try:
                 return folder_bytes.decode('utf-8', 'ignore')
             except Exception:
                 return str(folder_bytes)
-    # --------------------------------------------------------
 
     @staticmethod
     def _decode_header(value: Optional[bytes]) -> str:
@@ -108,7 +103,7 @@ class EmailReaderTool(BaseTool):
 
     def _get_parts_to_fetch(self, body_struct: Any) -> Dict[str, List[Dict]]:
         parts_to_fetch = {"body": [], "attachments": []}
-        
+
         def recurse_parts(part_struct: Any, part_id: str):
             is_obj = hasattr(part_struct, 'type')
 
@@ -116,13 +111,12 @@ class EmailReaderTool(BaseTool):
                 if is_obj:
                     part_type = getattr(part_struct, 'type', b'').decode('utf-8', 'ignore').lower()
                     part_subtype = getattr(part_struct, 'subtype', b'').decode('utf-8', 'ignore').lower()
-                    params = getattr(part_struct, 'params', {})
                     part_size = getattr(part_struct, 'size', 0) or 0
                     disposition_tuple = getattr(part_struct, 'disposition', None)
                     disposition = disposition_tuple[0].decode('utf-8', 'ignore').lower() if disposition_tuple else ""
                     disp_params_bytes = disposition_tuple[1] if disposition_tuple and len(disposition_tuple) > 1 else {}
                     disp_params_bytes = {k.encode() if isinstance(k, str) else k: v for k, v in disp_params_bytes.items()}
-                
+
                 elif isinstance(part_struct, (tuple, list)) and len(part_struct) >= 7:
                     part_type = part_struct[0].decode('utf-8', 'ignore').lower() if isinstance(part_struct[0], bytes) else str(part_struct[0]).lower()
                     part_subtype = part_struct[1].decode('utf-8', 'ignore').lower() if isinstance(part_struct[1], bytes) else str(part_struct[1]).lower()
@@ -158,8 +152,8 @@ class EmailReaderTool(BaseTool):
                 mime_type = f"{part_type}/{part_subtype}"
                 if mime_type in ['text/plain', 'text/html']:
                     parts_to_fetch["body"].append(part_id)
-                    
-            except Exception as e:
+
+            except Exception:
                 pass
 
         if hasattr(body_struct, 'type'):
@@ -170,7 +164,7 @@ class EmailReaderTool(BaseTool):
                          body_struct[0].decode('utf-8', 'ignore').lower() == 'multipart')
              recurse_parts(body_struct, "" if is_multi else "1")
         else:
-            print("  - Warning: Unexpected BODYSTRUCTURE format.")
+            Console.step_warn("Unexpected BODYSTRUCTURE format")
 
         for part_list_key in ["body", "attachments"]:
             corrected_list = []
@@ -186,10 +180,6 @@ class EmailReaderTool(BaseTool):
 
     @staticmethod
     def _fetch_with_fallback(client: IMAPClient, uids: List[int], data_items: List[bytes], context: str) -> Dict[int, Dict[bytes, Any]]:
-        """
-        兼容性拉取：优先批量 fetch，若触发 IMAPClient 的 marked section 断言错误，
-        自动降级为逐封 fetch，尽量保证其余邮件可继续处理。
-        """
         if not uids or not data_items:
             return {}
 
@@ -201,7 +191,7 @@ class EmailReaderTool(BaseTool):
             if not is_marked_section_error:
                 raise
 
-            print(f"⚠️ 检测到 IMAP 返回兼容性问题 ({context})，将降级为逐封拉取: {e}")
+            Console.step_warn(f"IMAP 兼容性问题 ({context})，降级为逐封拉取")
             recovered: Dict[int, Dict[bytes, Any]] = {}
 
             for uid in uids:
@@ -212,7 +202,7 @@ class EmailReaderTool(BaseTool):
                 except AssertionError as single_e:
                     single_msg = str(single_e)
                     if "unknown status keyword" in single_msg and "marked section" in single_msg:
-                        print(f"⚠️ 跳过无法解析的邮件 UID={uid} ({context}): {single_e}")
+                        Console.step_warn(f"跳过无法解析的邮件 UID={uid} ({context})")
                         continue
                     raise
 
@@ -228,90 +218,88 @@ class EmailReaderTool(BaseTool):
         folders_to_read = []
         is_gmail_default = self._service == "GMAIL" and folder == "INBOX"
         if is_gmail_default:
-            print(f"ℹ️ 检测到 Gmail 默认配置，将尝试读取以下分类: {GMAIL_CATEGORY_FOLDERS}")
+            Console.step_info(f"Gmail 多分类模式: {GMAIL_CATEGORY_FOLDERS}")
             folders_to_read = GMAIL_CATEGORY_FOLDERS
         else:
             folders_to_read = [folder]
-            print(f"ℹ️ 将读取指定文件夹: {folder}")
+            Console.step_info(f"读取文件夹: {folder}")
 
         try:
-            print(f"🔗 [1/5] 正在连接到 {self._imap_host}...")
+            Console.step_info(f"连接 IMAP 服务器 {self._imap_host}...")
             with IMAPClient(self._imap_host, ssl=True, timeout=30) as client:
-                print(f"🔐 [2/5] 正在登录邮箱 {self._email}...")
+                Console.step_info(f"登录邮箱 {self._email}...")
                 client.login(self._email, self._auth)
+                Console.step_ok("登录成功")
 
                 if "163.com" in self._imap_host.lower():
-                    print("  - 检测到163邮箱，正在发送ID握手...")
+                    Console.step_info("163 邮箱 - 发送 ID 握手...")
                     try: client.id_({"name": "email-summarizer", "version": "0.6"})
                     except exceptions.IMAPClientError: pass
 
                 processed_uids_in_session = set()
-                # 使用 self.decode_folder_name 静态方法
                 all_available_folders_raw = client.list_folders()
                 all_available_folders = {self.decode_folder_name(f[2]): f[2] for f in all_available_folders_raw}
 
                 for folder_name_to_try in folders_to_read:
                     actual_folder_name_decoded = next((name for name in all_available_folders if name.lower() == folder_name_to_try.lower()), None)
-                    
+
                     if not actual_folder_name_decoded:
                         if is_gmail_default and folder_name_to_try != "INBOX":
-                             print(f"⚠️ 在您的邮箱中找不到文件夹 '{folder_name_to_try}'，跳过。")
+                             Console.step_info(f"文件夹 '{folder_name_to_try}' 不存在，跳过")
                         elif not is_gmail_default:
                              raise exceptions.IMAPClientError(f"指定的文件夹 '{folder_name_to_try}' 不存在。")
                         continue
-                    
+
                     actual_folder_name_bytes = all_available_folders[actual_folder_name_decoded]
 
                     try:
-                        print(f"\n📁 [3/5, F:{actual_folder_name_decoded}] 正在选择文件夹 '{actual_folder_name_decoded}'...")
+                        Console.step_info(f"选择文件夹 '{actual_folder_name_decoded}'")
                         client.select_folder(actual_folder_name_bytes, readonly=True)
 
                         search_criteria = ["UNSEEN"] if use_unseen else ["ALL"]
-                        print(f"🔍 [4/5, F:{actual_folder_name_decoded}] 正在搜索'{"未读" if use_unseen else "所有"}'邮件...")
+                        search_label = "未读" if use_unseen else "所有"
+                        Console.step_info(f"搜索 {search_label} 邮件...")
                         uids = client.search(search_criteria)
-                        
+
                         if not uids:
-                            print(f"✅ 在 '{actual_folder_name_decoded}' 中没有找到新邮件。")
+                            Console.step_ok(f"'{actual_folder_name_decoded}' 中没有新邮件")
                             continue
 
                         latest_uids_in_folder = sorted(uids, reverse=True)[:max_count]
-                        # print(f"📧 在 '{actual_folder_name_decoded}' 找到 {len(uids)} 封，准备处理最新的 {len(latest_uids_in_folder)} 封。")
 
                         uids_to_process = [uid for uid in latest_uids_in_folder if uid not in processed_uids_in_session]
                         if not uids_to_process:
-                            print(f"  - '{actual_folder_name_decoded}' 中的最新邮件已在本会话其他文件夹处理过。")
+                            Console.step_info(f"'{actual_folder_name_decoded}' 中邮件已在其他文件夹处理过")
                             continue
 
-                        print(f"📥 [5/5, F:{actual_folder_name_decoded}] 正在分步获取 {len(uids_to_process)} 封邮件内容...")
-                        
+                        Console.step_info(f"获取 {len(uids_to_process)} 封邮件内容...")
+
                         envelopes_data = self._fetch_with_fallback(client, uids_to_process, [b'ENVELOPE'], f"{actual_folder_name_decoded}/ENVELOPE")
                         bodystructures_data = self._fetch_with_fallback(client, uids_to_process, [b'BODYSTRUCTURE'], f"{actual_folder_name_decoded}/BODYSTRUCTURE")
 
                         for i, uid in enumerate(uids_to_process, 1):
-                            # print(f"  --- 正在处理 '{actual_folder_name_decoded}' 中第 {i}/{len(uids_to_process)} 封 (UID: {uid}) ---")
                             envelope = envelopes_data.get(uid, {}).get(b'ENVELOPE')
                             bodystructure_raw = bodystructures_data.get(uid, {}).get(b'BODYSTRUCTURE')
 
                             if not envelope or not bodystructure_raw:
-                                print(f"    - 无法获取邮件元数据或结构，跳过。")
+                                Console.step_warn("无法获取邮件元数据，跳过")
                                 continue
-                            
+
                             mid = self._decode_header(envelope.message_id)
-                            uniq_id = mid if mid else f"uid-{uid}-{actual_folder_name_decoded}" 
+                            uniq_id = mid if mid else f"uid-{uid}-{actual_folder_name_decoded}"
 
                             if uniq_id in processed_ids:
-                                # print(f"    - 跳过已处理邮件 (ID: {uniq_id})")
                                 continue
-                            
+
                             parts_to_fetch = self._get_parts_to_fetch(bodystructure_raw)
                             fetch_query = [f'BODY[{p}]'.encode() for p in parts_to_fetch["body"]]
                             fetch_query.extend([f'BODY[{att["id"]}]'.encode() for att in parts_to_fetch["attachments"]])
-                            
+
                             plain_text, html_text, saved_attachments = "", "", []
-                            
+
                             if fetch_query:
                                 parts_data = self._fetch_with_fallback(client, [uid], fetch_query, f"{actual_folder_name_decoded}/BODY uid={uid}").get(uid, {})
-                                
+
                                 for part_id in parts_to_fetch["body"]:
                                     part_content = parts_data.get(f'BODY[{part_id}]'.encode(), b'').decode('utf-8', 'ignore')
                                     if '<html' in part_content.lower(): html_text += part_content
@@ -321,10 +309,10 @@ class EmailReaderTool(BaseTool):
                                     part_id = att_info['id']
                                     filename = att_info['filename']
                                     attachment_bytes = parts_data.get(f'BODY[{part_id}]'.encode())
-                                    
+
                                     safe_filename = re.sub(r'[\\/*?:"<>|]', "_", filename) if filename else f"attachment_{uid}_{part_id}.dat"
                                     filepath = os.path.join(ATTACHMENT_DIR, f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{safe_filename}")
-                                    
+
                                     if attachment_bytes:
                                         with open(filepath, 'wb') as f: f.write(attachment_bytes)
                                         saved_attachments.append(filepath)
@@ -347,40 +335,36 @@ class EmailReaderTool(BaseTool):
                                 "folder": actual_folder_name_decoded
                             })
                             new_ids.append(uniq_id)
-                            processed_uids_in_session.add(uid) 
+                            processed_uids_in_session.add(uid)
 
                     except exceptions.IMAPClientError as e:
-                        print(f"⚠️ 处理文件夹 '{actual_folder_name_decoded}' 时出错: {e}")
+                        Console.step_warn(f"处理文件夹 '{actual_folder_name_decoded}' 时出错: {e}")
                         continue
-                
+
                 if new_ids:
                     processed_ids.update(new_ids)
                     self._save_state({"processed_ids": list(processed_ids)})
-                    print(f"\n💾 已更新状态，新增 {len(new_ids)} 个已处理ID。")
+                    Console.step_info(f"状态已更新，新增 {len(new_ids)} 条记录")
 
-                print(f"\n✅ 流程完成，总共成功处理 {len(results)} 封新邮件。")
-                # 新增：输出最终待LLM处理的数量
-                print(f"📧 去重后，待LLM处理 {len(results)} 封邮件。")
+                Console.step_ok(f"流程完成，共处理 {len(results)} 封新邮件")
                 return json.dumps({"emails": results}, ensure_ascii=False)
-                
+
         except exceptions.LoginError:
-            error_msg = "IMAP登录失败: 请检查邮箱用户名或密码/授权码是否正确。"
-            print(f"❌ {error_msg}")
+            error_msg = "IMAP 登录失败 - 请检查邮箱用户名或密码/授权码"
+            Console.step_fail(error_msg)
             return json.dumps({"error": error_msg}, ensure_ascii=False)
         except Exception as e:
-            error_msg = f"邮件读取过程中发生未知错误: {type(e).__name__} - {e}"
-            print(f"❌ {error_msg}")
+            error_msg = f"邮件读取错误: {type(e).__name__} - {e}"
+            Console.step_fail(error_msg)
             return json.dumps({"error": error_msg}, ensure_ascii=False)
 
     def _safe_html_to_text(self, html_text: str) -> str:
-        """将 HTML 转文本并兼容畸形邮件片段（如孤立 <![endif]）。"""
         if not html_text:
             return ""
 
         try:
             return self._h2t.handle(html_text).strip()
         except AssertionError:
-            # 某些邮件（尤其是 Outlook 条件注释残片）会触发 html.parser 的 marked section 断言。
             cleaned = re.sub(r"<!--\[if.*?<!\[endif\]-->", " ", html_text, flags=re.IGNORECASE | re.DOTALL)
             cleaned = re.sub(r"<!\[[^\]]*\]>", " ", cleaned)
             try:

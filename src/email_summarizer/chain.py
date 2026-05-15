@@ -15,7 +15,6 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
-from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 
@@ -26,10 +25,7 @@ from .utils.email_utils import extract_email_contents
 from .utils.html_utils import compose_final_html_body
 from .utils.error_handler import handle_llm_error
 from .utils.console import Console
-
-load_dotenv()
-
-MAX_LLM_EMAILS = 20
+from .utils.config_loader import get_config, get_project_root
 
 
 def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
@@ -46,18 +42,27 @@ def _read_emails(limit: int, use_unseen: bool) -> List[Dict]:
 
 
 def _setup_llm_chain():
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
-    base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-    llm = ChatOpenAI(model=model_name, temperature=0, base_url=base_url) if base_url else ChatOpenAI(model=model_name, temperature=0)
+    cfg = get_config()
+    llm_cfg = cfg.get('llm', {})
+    model_name = llm_cfg.get('model', 'gpt-4o')
+    base_url = llm_cfg.get('base_url') or None
+    temperature = llm_cfg.get('temperature', 0)
+    if base_url:
+        llm = ChatOpenAI(model=model_name, temperature=temperature, base_url=base_url)
+    else:
+        llm = ChatOpenAI(model=model_name, temperature=temperature)
     summarizer_prompt = get_email_summarizer_prompt()
     return summarizer_prompt | llm | StrOutputParser()
 
 
 def _process_emails_parallel(emails: List[Dict]) -> List[str]:
+    cfg = get_config()
+    llm_cfg = cfg.get('llm', {})
+
     summarizer_chain = _setup_llm_chain()
     contents = [{"email_subject": e.get("subject", "(No Subject)"), "email_content": e["content"]} for e in emails]
 
-    max_concurrency = min(8, len(contents)) or 1
+    max_concurrency = min(llm_cfg.get('max_concurrency', 8), len(contents)) or 1
     Console.step_info(f"并行处理 {len(contents)} 封邮件 (最多 {max_concurrency} 个并发请求)")
 
     start_time = time.time()
@@ -75,7 +80,7 @@ def _process_emails_parallel(emails: List[Dict]) -> List[str]:
         last_error_msg = ""
         total = len(contents)
 
-        for future in as_completed(future_to_content, timeout=60):
+        for future in as_completed(future_to_content, timeout=llm_cfg.get('request_timeout', 60)):
             if not should_continue:
                 for remaining_future in future_to_content:
                     if not remaining_future.done():
@@ -127,9 +132,9 @@ def _save_archive_and_get_path(html_content: str) -> Optional[str]:
         return None
 
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        base_dir = os.path.dirname(os.path.dirname(current_dir))
-        archive_dir = os.path.join(base_dir, "archive")
+        cfg = get_config()
+        adv_cfg = cfg.get('advanced', {})
+        archive_dir = os.path.join(get_project_root(), adv_cfg.get('archive_dir', 'archive'))
         os.makedirs(archive_dir, exist_ok=True)
 
         filename = f"archive_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.html"
@@ -174,9 +179,9 @@ def _send_email(target_email: str, subject: str, final_html_body: str, archive_p
 
 def mark_emails_as_unprocessed(emails: List[Dict]):
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        base_dir = os.path.dirname(os.path.dirname(current_dir))
-        state_file = os.path.join(base_dir, "state", "processed_emails.json")
+        cfg = get_config()
+        adv_cfg = cfg.get('advanced', {})
+        state_file = os.path.join(get_project_root(), adv_cfg.get('state_file', 'state/processed_emails.json'))
 
         if os.path.exists(state_file):
             with open(state_file, 'r', encoding='utf-8') as f:
@@ -209,6 +214,7 @@ def _open_html_preview(file_path: Optional[str]) -> None:
 
 
 def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总结", use_unseen: bool = True, send_attachment: bool = False) -> Dict:
+    cfg = get_config()
     emails = []
 
     try:
@@ -218,9 +224,11 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         if not emails:
             return {"status": "no_new_emails", "message": "没有新的待处理邮件"}
 
-        if len(emails) > MAX_LLM_EMAILS:
-            Console.info(f"邮件数量 ({len(emails)}) 超过单次处理上限 ({MAX_LLM_EMAILS})，仅处理最近 {MAX_LLM_EMAILS} 封")
-            emails = emails[:MAX_LLM_EMAILS]
+        llm_cfg = cfg.get('llm', {})
+        max_emails = llm_cfg.get('max_emails_per_run', 20)
+        if len(emails) > max_emails:
+            Console.info(f"邮件数量 ({len(emails)}) 超过单次处理上限 ({max_emails})，仅处理最近 {max_emails} 封")
+            emails = emails[:max_emails]
 
         # ---- Step 2: LLM 智能总结 ----
         Console.step_header("STEP 2/5  LLM 智能总结")
@@ -243,7 +251,8 @@ def run_pipeline(limit: int, target_email: str, subject: str = "邮件每日总�
         if archive_path and send_attachment:
             final_html_body = compose_final_html_body(summary_htmls, os.path.basename(archive_path), emails)
 
-        if archive_path:
+        adv_cfg = cfg.get('advanced', {})
+        if archive_path and adv_cfg.get('auto_open_preview', True):
             threading.Thread(target=_open_html_preview, args=(archive_path,), daemon=True).start()
 
         # ---- Step 5: 发送邮件 ----

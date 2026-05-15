@@ -3,109 +3,64 @@
 """
 config.py
 为邮箱服务提供容错的配置加载：
-- 优先读取 EMAIL_CONFIGS JSON 中对应服务；缺失项自动回填默认值
-- 如果没有 EMAIL_CONFIGS 或解析失败，则使用简单环境变量：
-  EMAIL_USE, EMAIL_USERNAME/EMAIL_USER, EMAIL_PASSWORD/EMAIL_AUTH_CODE,
-  IMAP_HOST(可选), SMTP_HOST(可选), SMTP_PORT(可选)
-- 为电脑小白优化：只需要填 EMAIL_USE、EMAIL_USERNAME、EMAIL_PASSWORD 即可
+- 优先读取 config.yaml 中对应服务；缺失项自动回填默认值
+- 为电脑小白优化：只需要在 config.yaml 填 email.service、email.username，
+  在 .env 填 EMAIL_PASSWORD 即可
 """
-import os
-import json
 from typing import Dict
-from dotenv import load_dotenv
 
-load_dotenv()
-
-SUPPORTED_SERVICES = {"GMAIL", "163", "QQ", "OUTLOOK"}
-DEFAULTS: Dict[str, Dict] = {
-    "GMAIL": {
-        "imap_host": "imap.gmail.com",
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-    },
-    "OUTLOOK": {
-        "imap_host": "outlook.office365.com",
-        "smtp_host": "smtp.office365.com",
-        "smtp_port": 587,
-    },
-    "QQ": {
-        "imap_host": "imap.qq.com",
-        "smtp_host": "smtp.qq.com",
-        "smtp_port": 465,
-    },
-    "163": {
-        "imap_host": "imap.163.com",
-        "smtp_host": "smtp.163.com",
-        "smtp_port": 465,
-    },
-}
-
-
-def _read_simple_vars(svc: str) -> Dict:
-    """从简单环境变量读取配置，并使用默认值回填缺失项"""
-    username = os.getenv("EMAIL_USERNAME") or os.getenv("EMAIL_USER")
-    password = os.getenv("EMAIL_PASSWORD") or os.getenv("EMAIL_AUTH_CODE")
-
-    imap_host = os.getenv("IMAP_HOST") or DEFAULTS[svc]["imap_host"]
-    smtp_host = os.getenv("SMTP_HOST") or DEFAULTS[svc]["smtp_host"]
-    smtp_port_raw = os.getenv("SMTP_PORT")
-    smtp_port = int(smtp_port_raw) if smtp_port_raw else int(DEFAULTS[svc]["smtp_port"])
-
-    return {
-        "service_name": svc,
-        "imap_host": imap_host,
-        "smtp_host": smtp_host,
-        "smtp_port": smtp_port,
-        "username": username,
-        "password": password,
-    }
+from .config_loader import get_config
 
 
 def get_email_service_config() -> Dict:
     """
     统一加载邮箱服务配置（容错）：
-    - 如果 EMAIL_CONFIGS JSON 存在且有效，读取对应服务并与简单变量合并
-    - 否则使用简单变量 + 默认值
+    - 从 config.yaml 读取 email 节和服务商默认值
     - 校验用户名/密码是否存在
     """
-    svc = (os.getenv("EMAIL_USE") or "GMAIL").upper()
-    if svc not in SUPPORTED_SERVICES:
-        raise ValueError(f"不支持的邮箱服务: {svc}。请在 .env 中将 EMAIL_USE 设置为 GMAIL/163/QQ/OUTLOOK 之一。")
+    cfg = get_config()
 
-    # 尝试解析 EMAIL_CONFIGS JSON
-    cfg_json = os.getenv("EMAIL_CONFIGS")
-    if cfg_json:
-        try:
-            cfg = json.loads(cfg_json)
-            if isinstance(cfg, dict) and svc in cfg:
-                base = DEFAULTS[svc].copy()
-                src = cfg.get(svc, {}) or {}
+    email_cfg = cfg.get('email', {})
+    service_defaults = cfg.get('service_defaults', {})
 
-                # 合并配置，缺失项回填默认值
-                imap_host = src.get("imap_host") or base["imap_host"]
-                smtp_host = src.get("smtp_host") or base["smtp_host"]
-                smtp_port = int(src.get("smtp_port", base["smtp_port"]))
-                username = src.get("username") or os.getenv("EMAIL_USERNAME") or os.getenv("EMAIL_USER")
-                password = src.get("password") or os.getenv("EMAIL_PASSWORD") or os.getenv("EMAIL_AUTH_CODE")
+    svc = (email_cfg.get('service') or 'GMAIL').upper()
+    if svc not in service_defaults:
+        raise ValueError(
+            f"不支持的邮箱服务类型「{svc}」\n"
+            f"请在 config.yaml 中修改 email.service 为以下之一：\n"
+            f"  GMAIL / QQ / 163 / OUTLOOK\n"
+            f"当前填写的值: {svc}"
+        )
 
-                result = {
-                    "service_name": svc,
-                    "imap_host": imap_host,
-                    "smtp_host": smtp_host,
-                    "smtp_port": smtp_port,
-                    "username": username,
-                    "password": password,
-                }
+    defaults = service_defaults[svc]
 
-                if not result["username"] or not result["password"]:
-                    raise ValueError("缺少邮箱账号或授权码：请在 .env 中填写 EMAIL_USERNAME 和 EMAIL_PASSWORD（或 EMAIL_USER/EMAIL_AUTH_CODE）。")
-                return result
-        except Exception:
-            # JSON 解析失败则回退到简单变量
-            pass
+    username = email_cfg.get('username', '')
+    password = email_cfg.get('password', '')  # 由 config_loader 从 .env 合并
 
-    # 使用简单变量方案
-    simple = _read_simple_vars(svc)
-    if not simple["username"] or not simple["password"]:
-        raise ValueError("缺少邮箱账号或授权码：请在 .env 中填写 EMAIL_USERNAME 和 EMAIL_PASSWORD（或 EMAIL_USER/EMAIL_AUTH_CODE）。")
-    return simple
+    imap_host = email_cfg.get('imap_host') or defaults['imap_host']
+    smtp_host = email_cfg.get('smtp_host') or defaults['smtp_host']
+    smtp_port_raw = email_cfg.get('smtp_port')
+    smtp_port = int(smtp_port_raw) if smtp_port_raw else int(defaults['smtp_port'])
+
+    result = {
+        'service_name': svc,
+        'imap_host': imap_host,
+        'smtp_host': smtp_host,
+        'smtp_port': smtp_port,
+        'username': username,
+        'password': password,
+    }
+
+    if not result['username'] or not result['password']:
+        raise ValueError(
+            "邮箱账号或授权码未填写：\n"
+            "  - 在 config.yaml 中设置 email.username（你的邮箱地址）\n"
+            "  - 在 .env 文件中设置 EMAIL_PASSWORD（邮箱授权码，非登录密码）\n"
+            "\n"
+            "获取授权码的方法：\n"
+            "  Gmail: 账户设置 → 安全性 → 两步验证 → 应用专用密码\n"
+            "  QQ邮箱: 设置 → 账户 → POP3/SMTP服务 → 生成授权码\n"
+            "  163邮箱: 设置 → POP3/SMTP/IMAP → 新增授权码"
+        )
+
+    return result

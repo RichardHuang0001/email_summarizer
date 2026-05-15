@@ -13,33 +13,34 @@ from email.header import decode_header, make_header
 from datetime import datetime
 
 import html2text
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from imapclient import IMAPClient, exceptions
 
 from ..utils.config import get_email_service_config
+from ..utils.config_loader import get_config, get_project_root
 from ..utils.console import Console
 
-load_dotenv()
+# --- 从统一配置加载 ---
+_cfg = get_config()
+_net_cfg = _cfg.get('network', {})
+_att_cfg = _cfg.get('attachment', {})
+_adv_cfg = _cfg.get('advanced', {})
+_parse_cfg = _cfg.get('parsing', {})
 
-# --- 配置常量 ---
-CORE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE_DIR = os.path.dirname(CORE_DIR)
-STATE_PATH = os.path.join(BASE_DIR, "state", "processed_emails.json")
-ATTACHMENT_DIR = os.path.join(BASE_DIR, "attachments")
+PROJECT_ROOT = get_project_root()
+STATE_PATH = os.path.join(PROJECT_ROOT, _adv_cfg.get('state_file', 'state/processed_emails.json'))
+ATTACHMENT_DIR = os.path.join(PROJECT_ROOT, _adv_cfg.get('attachment_dir', 'attachments'))
 
 os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
 os.makedirs(ATTACHMENT_DIR, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.gif', '.ppt', '.pptx', '.doc', '.docx', '.xls', '.xlsx'}
-BLOCKED_EXTENSIONS = {'.zip', '.rar', '.7z', '.exe', '.sh', '.bat'}
-MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024
+ALLOWED_EXTENSIONS = set(_att_cfg.get('allowed_extensions', ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.ppt', '.pptx', '.doc', '.docx', '.xls', '.xlsx']))
+BLOCKED_EXTENSIONS = set(_att_cfg.get('blocked_extensions', ['.zip', '.rar', '.7z', '.exe', '.sh', '.bat']))
+MAX_ATTACHMENT_SIZE = _att_cfg.get('max_size_mb', 5) * 1024 * 1024
+IMAP_TIMEOUT = _net_cfg.get('imap_timeout', 30)
 
-GMAIL_CATEGORY_FOLDERS = [
-    "INBOX",
-    "[Gmail]/垃圾邮件",
-]
+GMAIL_CATEGORY_FOLDERS = _adv_cfg.get('gmail_category_folders', ["INBOX", "[Gmail]/垃圾邮件"])
 
 
 class EmailReaderInput(BaseModel):
@@ -59,11 +60,11 @@ class EmailReaderTool(BaseTool):
         self._email = cfg["username"]
         self._auth = cfg["password"]
         self._imap_host = cfg["imap_host"]
-        self._service = (cfg.get("service_name") or (os.getenv("EMAIL_USE") or "GMAIL")).upper()
+        self._service = (cfg.get("service_name") or "GMAIL").upper()
         self._h2t = html2text.HTML2Text()
-        self._h2t.ignore_links = True
-        self._h2t.ignore_images = True
-        self._h2t.body_width = 0
+        self._h2t.ignore_links = _parse_cfg.get('ignore_links', True)
+        self._h2t.ignore_images = _parse_cfg.get('ignore_images', True)
+        self._h2t.body_width = _parse_cfg.get('body_width', 0)
 
     @staticmethod
     def _load_state() -> Dict[str, List[str]]:
@@ -226,7 +227,7 @@ class EmailReaderTool(BaseTool):
 
         try:
             Console.step_info(f"连接 IMAP 服务器 {self._imap_host}...")
-            with IMAPClient(self._imap_host, ssl=True, timeout=30) as client:
+            with IMAPClient(self._imap_host, ssl=True, timeout=IMAP_TIMEOUT) as client:
                 Console.step_info(f"登录邮箱 {self._email}...")
                 client.login(self._email, self._auth)
                 Console.step_ok("登录成功")

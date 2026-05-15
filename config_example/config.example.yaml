@@ -1,0 +1,82 @@
+# =====================================================
+# 邮件总结工具 - 配置文件
+# =====================================================
+# 使用说明：
+#   1. 将此文件复制到项目根目录，重命名为 config.yaml
+#   2. 修改下方标注了 "【必填】" 的选项
+#   3. 在 .env 文件中填写 API Key 和邮箱授权码
+#
+#   只需要改 5 个地方，其他保持默认即可：
+#     config.yaml → email.service / email.username / email.notify_to
+#     .env        → OPENAI_API_KEY / EMAIL_PASSWORD
+# =====================================================
+
+# ===== LLM 大模型配置 =====
+llm:
+  model: "deepseek-v4-flash"                  # 模型名称（deepseek / gpt-4o / gpt-4o-mini 等）
+  base_url: "https://api.deepseek.com"        # DeepSeek API 地址（无需修改）
+  temperature: 0                              # 创造性 0~1，0 最稳定，推荐保持 0
+  max_emails_per_run: 20                      # 单次最多处理几封邮件
+  max_concurrency: 8                          # 并行请求数，网络差可调小
+  request_timeout: 60                         # 处理超时秒数
+
+# ===== 邮箱配置 =====
+email:
+  service: "GMAIL"                            # 【必填】邮箱类型：GMAIL / QQ / 163 / OUTLOOK
+  username: "your_email@gmail.com"            # 【必填】你的邮箱地址
+  notify_to: "your_email@example.com"         # 【必填】总结报告发送到哪个邮箱
+  subject: "今日邮件摘要"                      # 邮件标题（可自定义）
+  # 以下一般不用改，留空会自动选择
+  imap_host: ""
+  smtp_host: ""
+  smtp_port: ""
+
+# ===== 各邮箱的默认服务器地址（无需修改） =====
+service_defaults:
+  GMAIL:
+    imap_host: "imap.gmail.com"
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+  OUTLOOK:
+    imap_host: "outlook.office365.com"
+    smtp_host: "smtp.office365.com"
+    smtp_port: 587
+  QQ:
+    imap_host: "imap.qq.com"
+    smtp_host: "smtp.qq.com"
+    smtp_port: 465
+  "163":
+    imap_host: "imap.163.com"
+    smtp_host: "smtp.163.com"
+    smtp_port: 465
+
+# ===== 附件过滤（一般不用改） =====
+attachment:
+  allowed_extensions: [.pdf, .png, .jpg, .jpeg, .gif, .ppt, .pptx, .doc, .docx, .xls, .xlsx]
+  blocked_extensions: [.zip, .rar, .7z, .exe, .sh, .bat]
+  max_size_mb: 5
+
+# ===== 网络与重试（一般不用改） =====
+network:
+  imap_timeout: 30
+  smtp_timeout: 30
+  smtp_retry_attempts: 3
+  smtp_retry_min_wait: 2
+  smtp_retry_max_wait: 30
+
+# ===== 邮件内容解析（一般不用改） =====
+parsing:
+  ignore_links: true
+  ignore_images: true
+  body_width: 0
+
+# ===== 高级选项（一般不用改） =====
+advanced:
+  gmail_category_folders:
+    - "INBOX"
+    - "[Gmail]/垃圾邮件"
+  archive_dir: "archive"
+  state_file: "state/processed_emails.json"
+  attachment_dir: "attachments"
+  auto_open_preview: true
+  send_attachment: false

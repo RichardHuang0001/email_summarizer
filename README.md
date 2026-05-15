@@ -1,156 +1,165 @@
 # LLM 邮件总结器
 
-[![Python 版本](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![许可证](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+由 LLM 驱动的自动化邮件总结工具：获取未读邮件 → AI 生成摘要 → 发送到指定邮箱。
 
-一个由大型语言模型 (LLM) 驱动的自动化邮件总结工具。该工具可以获取未读邮件，生成简洁的摘要，并将摘要报告发送到指定的电子邮箱。
+本教程以 **Gmail + DeepSeek** 为例。
 
-## ✨ 功能特点
-
-- **📧 自动获取邮件**: 通过 IMAP 连接到您的电子邮件帐户，获取最新的未读邮件。
-- **🤖 AI 驱动的摘要**: 利用 LLM 为您的邮件生成高质量、简洁的摘要。
-- **⚙️ 可自定义配置**: 轻松配置电子邮件帐户、LLM 提供商和通知设置。
-- **✅ 一期功能已上线**
-- **🗓️ 二期功能规划中**: 一键配置成定时任务，每日/一定间隔时间自动触发；优化分类和评级能力 
-
-  
-## 需求及最佳实践建议
-本项目面向学生邮箱和个人求职邮箱中消息过多的痛点，最佳实践建议为：给自己的求职邮箱/学生邮箱配置一条无条件转发规则，将所有邮件转发到一个专门的邮箱处理，推荐使用Gmail，最稳定，接口最标准。本项目也支持163邮箱作为备选（偶尔会掉线，不关俺事，是服务商限制）。
-## 🖼️ 效果示意图
-
-<img src="./example.jpg" alt="效果示意图" width="600">
-
-> 示例图展示了工具生成的邮件摘要效果。
-
-## 🚀 快速开始
-
-请按照以下说明在您的本地计算机上设置并运行邮件总结器。
-
-### 📋 环境要求
+## 环境要求
 
 - Python 3.9+
-- 一个兼容OpenAI API 密钥（下文有推荐的免费获取方式）
-- 一个启用了 IMAP 的电子邮箱账户
-- 本工具在MacOS上开发测试，理论上兼容Windows系统，但可能有些许小问题，请您自行求助AI～
+- 一个 Gmail 邮箱（需开启 IMAP）
+- 一个 DeepSeek API Key
 
-### 🛠️ 安装步骤
+## 安装与配置
 
-1.  **克隆代码仓库:**
-    打开一个终端（macos按cmd+空格打开Spotlight搜索“终端”或者“Terminal”即可）
-    （为了方便建议克隆到home目录,信我的话照着下面的推荐命令执行即可）
-    ```bash
-    cd ~
-    git clone https://github.com/RichardHuang0001/email_summarizer.git
-    cd email_summarizer
-    ```
+以下流程以 **Gmail + DeepSeek** 为例。克隆项目后只需三步：运行脚本 → 获取密钥 → 填写配置。
 
-1.  **创建并激活虚拟环境（可选，建议不选，嫌麻烦就不用了，不然每次都要手动激活）:**
-
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-
-2.  **安装所需依赖:**
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-### ⚙️ 配置
-
-1.  在项目的根目录下 **创建一个 `.env` 文件**。您可以从示例文件复制：
-    执行下面的命令就可以自动完成创建，您只需要打开.env文件并修改即可
-    ```bash
-    cp config_example/.env.example ./.env
-    ```
-2. **查看项目中config_example文件夹下的.env.example文件**
-3.  **根据.env.example编辑 `.env` 文件**，填入您的个人配置：
-
-    **注意:** 为安全起见，强烈建议为您的电子邮箱帐户使用 **应用专用密码** (Gmail/Outlook) 或 **客户端授权码** (163/QQ)，而不是您的主登录密码。请参考对应邮箱服务商的官方文档获取生成方法。
-
-### API Key 和邮箱授权码获取方法
-API KEY： 推荐使用Open Router：https://openrouter.ai/ 推荐使用Google账号注册，从右上角“我的”->“API Keys”获取 API KEY，复制并保存好。每天可以用50次(不太稳定)
-也可以使用deepseek官方的API KEY：https://www.deepseek.cn/，价格大约每次5毛钱
-
-邮箱授权码： 不同邮箱服务商获取方法不同，推荐使用Gmail（稳定）
-获取方法：
-- Gmail： 右上角点击Google头像-管理您的Google账号-安全性-先启用两步验证（否则弄不了后续）-启用好只有左上角搜索“应用专用密码”-新建一个应用专用密码，把密码复制出来保存好
-- 163/QQ： 从您的 163/QQ 邮箱设置-安全-客户端/IMAP/SMTP授权码，（开启IMAP/SMTP服务），然后新建一个授权码，把授权码复制出来保存好
-
-然后把base url和api key填写到.env文件中，邮箱号和授权码填写到对应的位置
-
-## （建议选择）配置完成后运行测试脚本
-在项目目录里面，先后执行这两条命令，如果都返回成功，那么就十拿九稳了
-```bash
-python tests/test_mail.py
-```
-```bash
-python tests/test_llm.py
-```
-
-## ▶️ 使用方法
-
-要运行邮件总结器，请从根目录执行 `main.py` 脚本：
-
-如果按照我的推荐放在了home目录，则每次只需要打开终端，执行下面这两条命令
-```bash
-cd ~/email_summarizer
-python main.py [OPTIONS]
-```
-
-## 懒人包（配置为在终端任何位置输入email即可运行）
-适用于MacOS
-复制下面这个代码块，粘贴到终端，然后回车
-执行成功后，关闭终端重新打开即可输入email执行脚本
-```zsh
-ALIAS_DEFINITION="alias email='python ~/email_summarizer/main.py'"; ZSHRC_PATH="$HOME/.zshrc"; if [ -f "$ZSHRC_PATH" ]; then grep -Fxq -- "$ALIAS_DEFINITION" "$ZSHRC_PATH" || { echo "" >> "$ZSHRC_PATH"; echo "# Alias for Email Summarizer (added automatically)" >> "$ZSHRC_PATH"; echo "$ALIAS_DEFINITION" >> "$ZSHRC_PATH"; echo "✅ 成功添加别名 'email' 到 $ZSHRC_PATH"; echo "👉 请重启终端或运行 'source ~/.zshrc'"; }; else echo "$ALIAS_DEFINITION" > "$ZSHRC_PATH"; echo "✅ 创建了 $ZSHRC_PATH 并添加了别名 'email'"; echo "👉 请重启终端或运行 'source ~/.zshrc'"; fi; unset ALIAS_DEFINITION ZSHRC_PATH
-```
-如果出现类似 permission denied之类的权限问题，请求助AI，让他帮忙检查.zshrc文件的权限，把这个权限配置成你自己的用户权限
-
-### 命令行选项(可选)
-
-- `--limit`: 读取新邮件的最大数量 (默认: 10)。建议少点，否则容易崩。
-- `--to`: 接收摘要报告的邮箱地址 (会覆盖 `.env` 文件中的 `DEFAULT_NOTIFY_TO`)。
-- `--subject`: 摘要邮件的主题 (默认: "今日邮件摘要")。
-- `--all`: 读取所有邮件，而不仅仅是未读邮件。
-- `--send-attachment`: 将归档的摘要作为附件发送。
-
-### 示例
-
-获取最近 10 封未读邮件，并将摘要发送到 `test@example.com`：
+### 第 1 步：一键安装
 
 ```bash
-python main.py --limit 10 --to "test@example.com"
+cd ~
+git clone https://github.com/RichardHuang0001/email_summarizer.git
+cd email_summarizer
+bash start.sh
 ```
 
-## 📁 项目结构
+`start.sh` 会自动完成两件事：
+- 安装 Python 依赖（`pip install -r requirements.txt`）
+- 从模板创建 `config.yaml` 和 `.env`（已存在的不会覆盖）
+
+### 第 2 步：获取密钥
+
+**DeepSeek API Key：**
+
+1. 打开 https://platform.deepseek.com/ 注册并登录
+2. 右上角「API Keys」→「创建 API Key」
+3. 复制 key（格式 `sk-xxxxxxxx`），稍后填入 `.env`
+
+**Gmail 应用专用密码：**
+
+> Gmail 不允许直接用登录密码连接第三方工具，必须生成「应用专用密码」。
+
+1. 打开 https://myaccount.google.com/ 并登录
+2. 进入「安全性」→ 先开启「两步验证」（已开启则跳过）
+3. 在「安全性」页面搜索「应用专用密码」
+4. 选择应用 = `邮件`，设备 = `其他（自定义名称）`，输入 `Email Summarizer`
+5. 点击「生成」，复制 16 位密码（空格不需要删除），稍后填入 `.env`
+
+> QQ / 163 / Outlook 用户：在邮箱设置中开启 IMAP/SMTP 获取授权码，然后改 `config.yaml` 的 `email.service`。
+
+### 第 3 步：填写配置（5 个值）
+
+打开 `config.yaml`，修改这 3 项：
+
+```yaml
+email:
+  service: "GMAIL"                    # GMAIL / QQ / 163 / OUTLOOK
+  username: "your_email@gmail.com"    # 改为你的邮箱地址
+  notify_to: "your_email@example.com" # 接收总结报告的邮箱
+```
+
+打开 `.env`，修改这 2 项：
+
+```bash
+OPENAI_API_KEY="sk-xxxxxxxx"              # DeepSeek API Key
+EMAIL_PASSWORD="xxxx xxxx xxxx xxxx"      # Gmail 应用专用密码
+```
+
+### 配置检查清单
+
+| 项目 | 位置 | 填了吗 |
+|------|------|--------|
+| 邮箱类型 | `config.yaml` → `email.service` | ☐ |
+| 邮箱地址 | `config.yaml` → `email.username` | ☐ |
+| 接收报告的邮箱 | `config.yaml` → `email.notify_to` | ☐ |
+| API Key | `.env` → `OPENAI_API_KEY` | ☐ |
+| 邮箱授权码 | `.env` → `EMAIL_PASSWORD` | ☐ |
+
+## 运行
+
+```bash
+python main.py
+```
+
+运行时程序会自动检查配置，缺少任何必填项都会给出明确提示。
+
+### 可选测试
+
+```bash
+python tests/test_llm.py    # 测试 LLM 连接是否正常
+python tests/test_mail.py   # 测试邮箱连接是否正常
+```
+
+### 命令行参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--limit N` | 处理邮件数量上限 | config.yaml 中 `max_emails_per_run`（默认 20） |
+| `--to` | 接收报告的邮箱（覆盖 config.yaml） | `email.notify_to` |
+| `--subject` | 邮件标题 | `email.subject`（默认"今日邮件摘要"） |
+| `--all` | 读取所有邮件而非仅未读 | 仅未读 |
+| `--send-attachment` | 发送归档文件作为附件 | false |
+
+### 配置终端快捷命令（MacOS / Linux）
+
+配置之后，在终端任意位置输入 `email` 即可运行，无需每次 `cd` 到项目目录。
+
+**原理**：在 shell 配置文件（`~/.zshrc`）中添加一行 alias（别名），将 `email` 映射为 `python ~/email_summarizer/main.py`。因为用了绝对路径，所以从任何目录都能找到脚本。命令行参数也会自动透传。
+
+**设置方法**（复制整行到终端执行）：
+
+```bash
+echo 'alias email="python ~/email_summarizer/main.py"' >> ~/.zshrc && source ~/.zshrc
+```
+
+执行后立即生效。关闭终端重新打开也依然有效（因为写入了 `~/.zshrc`）。
+
+**验证**：
+
+```bash
+email --help          # 应显示帮助信息
+```
+
+**使用示例**：
+
+```bash
+email                          # 使用默认配置运行
+email --limit 5                # 只处理 5 封
+email --subject "上午邮件速览"  # 自定义标题
+email --all                    # 处理所有邮件（而非仅未读）
+```
+
+**移除**（如果以后不需要了）：
+
+```bash
+# 编辑 ~/.zshrc，删除包含 "alias email=" 的那一行，然后：
+source ~/.zshrc
+```
+
+## 常见问题
+
+**Q: 运行后提示「缺少 OPENAI_API_KEY」**
+
+检查 `.env` 文件是否在项目根目录，内容格式：`OPENAI_API_KEY="sk-xxxx"`（带引号）。
+
+**Q: 提示邮箱登录失败**
+
+- Gmail：确认用了应用专用密码而非登录密码，确认已开启两步验证
+- QQ/163：确认已在邮箱设置中开启 IMAP/SMTP 服务并获取了授权码
+
+## 项目结构
 
 ```
-.
-├── .gitignore
-├── README.md
-├── archive/            # 归档文件存放目录
-├── config_example/     # 配置文件示例
-├── docs/               # 项目文档
-├── main.py             # 程序主入口
-├── requirements.txt    # 依赖列表
-├── scripts/            # 辅助脚本
-├── src/                # 源代码
-│   ├── attachments/    # 附件目录
-│   └── email_summarizer/ # 核心业务逻辑
-│       ├── __init__.py
-│       ├── chain.py      # 定义了主要的邮件处理和总结流程
-│       ├── prompts.py    # 存放用于 LLM 的提示
-│       ├── tools/        # 工具函数和辅助脚本
-│       └── utils/        # 通用工具函数
-└── tests/              # 测试代码
+├── start.sh                    # 一键安装脚本
+├── main.py                     # 程序入口
+├── config.yaml                 # 你的本地配置（不提交到 Git）
+├── config_example/             # 配置文件模板
+│   ├── config.example.yaml
+│   └── .env.example
+├── src/email_summarizer/       # 核心代码
+│   ├── chain.py                # 邮件处理流程编排
+│   ├── tools/                  # 邮箱读写工具
+│   └── utils/                  # 配置加载、HTML 生成等
+├── archive/                    # 归档文件
+└── tests/                      # 测试脚本
 ```
-
-## 🤝 贡献
-
-欢迎各种形式的贡献！如果您有任何建议或发现任何错误，请随时提交 Pull Request 或开启一个 Issue。
-
-## 📄 许可证
-
-该项目基于 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。

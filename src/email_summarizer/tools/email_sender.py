@@ -12,20 +12,25 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 import logging
 
-load_dotenv()
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 from ..utils.config import get_email_service_config
+from ..utils.config_loader import get_config
 from ..utils.console import Console
+
+# --- 从统一配置加载网络与重试参数 ---
+_net_cfg = get_config().get('network', {})
+_SMTP_TIMEOUT = _net_cfg.get('smtp_timeout', 30)
+_SMTP_RETRY_ATTEMPTS = _net_cfg.get('smtp_retry_attempts', 3)
+_SMTP_RETRY_MIN_WAIT = _net_cfg.get('smtp_retry_min_wait', 2)
+_SMTP_RETRY_MAX_WAIT = _net_cfg.get('smtp_retry_max_wait', 30)
 
 
 class SenderInput(BaseModel):
@@ -71,8 +76,8 @@ class EmailSenderTool(BaseTool):
         return msg
 
     @retry(
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=_SMTP_RETRY_MIN_WAIT, max=_SMTP_RETRY_MAX_WAIT),
+        stop=stop_after_attempt(_SMTP_RETRY_ATTEMPTS),
         before_sleep=before_sleep_log(logger, logging.WARNING)
     )
     def _run(self, to: str, subject: str, body: str, is_html: bool = False, attachment_path: Optional[str] = None, cc: Optional[str] = None) -> str:
@@ -84,13 +89,13 @@ class EmailSenderTool(BaseTool):
             ssl_context = ssl.create_default_context()
             if self._smtp_port == 465:
                 Console.step_info(f"SMTP_SSL (端口 {self._smtp_port})")
-                with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl_context) as server:
+                with smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=_SMTP_TIMEOUT, context=ssl_context) as server:
                     server.login(self._email, self._auth)
                     to_addrs = [to] + ([cc] if cc else [])
                     server.sendmail(self._email, to_addrs, msg.as_string())
             else:
                 Console.step_info(f"STARTTLS (端口 {self._smtp_port})")
-                with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30) as server:
+                with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=_SMTP_TIMEOUT) as server:
                     server.ehlo()
                     server.starttls(context=ssl_context)
                     server.ehlo()

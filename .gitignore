@@ -23,8 +23,10 @@ ENV/
 # 本地敏感配置（不追踪真实密钥）
 .env
 .envrc
+config.yaml
 config/.env
 config/*.env
+config_example/.env
 
 # 归档与生成的报告（保留占位文件）
 archive/**

@@ -32,6 +32,29 @@ def _extract_rating_from_html(html_snippet: str) -> int:
         return 0 # 解析出错
 # --- 提取星级函数结束 ---
 
+def _inject_gmail_link(card_html: str, email_id: Optional[str]) -> str:
+    """在邮件卡片底部插入 Gmail 原邮件链接（小字体）"""
+    if not card_html or not email_id:
+        return card_html
+    if '在 Gmail 中查看' in card_html:
+        return card_html
+
+    clean_id = email_id.strip('<>')
+    gmail_url = f"https://mail.google.com/mail/u/0/#search/rfc822msgid%3A{clean_id}"
+
+    link_html = (
+        '<p style="margin: 6px 0 0 0; padding: 0; font-size: 11px;">'
+        '<a href="' + gmail_url + '" target="_blank" '
+        'style="color: #999999; text-decoration: none; border-bottom: 1px dotted #cccccc;">'
+        '在 Gmail 中查看 &#8599;</a></p>'
+    )
+
+    idx = card_html.rfind('</div>')
+    if idx >= 0:
+        return card_html[:idx] + link_html + '\n' + card_html[idx:]
+    return card_html
+
+
 # --- 【新增】在卡片标题下插入时间行 ---
 def _inject_timestamp_into_card(card_html: str, timestamp: Optional[str]) -> str:
     if not card_html or not timestamp:
@@ -57,7 +80,10 @@ def compose_final_html_body(summary_htmls: List[str], archive_path: Optional[str
     if emails_meta:
         injected_cards: List[str] = []
         for card, meta in zip(summary_htmls, emails_meta):
-            injected_cards.append(_inject_timestamp_into_card(card, (meta or {}).get('date')))
+            meta_dict = meta or {}
+            card = _inject_timestamp_into_card(card, meta_dict.get('date'))
+            card = _inject_gmail_link(card, meta_dict.get('id'))
+            injected_cards.append(card)
         # 处理长度不匹配的剩余卡片
         if len(summary_htmls) > len(injected_cards):
             injected_cards.extend(summary_htmls[len(injected_cards):])

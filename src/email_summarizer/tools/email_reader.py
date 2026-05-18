@@ -40,12 +40,9 @@ BLOCKED_EXTENSIONS = set(_att_cfg.get('blocked_extensions', ['.zip', '.rar', '.7
 MAX_ATTACHMENT_SIZE = _att_cfg.get('max_size_mb', 5) * 1024 * 1024
 IMAP_TIMEOUT = _net_cfg.get('imap_timeout', 30)
 
-GMAIL_CATEGORY_FOLDERS = _adv_cfg.get('gmail_category_folders', ["INBOX", "[Gmail]/垃圾邮件"])
-
-
 class EmailReaderInput(BaseModel):
     max_count: int = Field(20, description="每个文件夹读取的新邮件最大数量，1-50")
-    folder: str = Field("INBOX", description="要读取的 IMAP 文件夹。对于 Gmail，如果保持默认'INBOX'，工具会尝试读取 GMAIL_CATEGORY_FOLDERS 中定义的分类")
+    folder: str = Field("INBOX", description="要读取的 IMAP 文件夹。Gmail 默认会自动检测 [Gmail]/All Mail 和垃圾邮件文件夹")
     use_unseen: bool = Field(True, description="是否仅读取未读邮件")
 
 
@@ -90,6 +87,40 @@ class EmailReaderTool(BaseTool):
                 return folder_bytes.decode('utf-8', 'ignore')
             except Exception:
                 return str(folder_bytes)
+
+    @staticmethod
+    def _resolve_gmail_folders(available_folders: dict) -> list:
+        """
+        Auto-detect Gmail All Mail and Spam folders regardless of account language.
+        Uses [Gmail]/All Mail (所有邮件) to cover inbox + archived emails across all categories.
+        Returns list of decoded folder names.
+        """
+        all_mail_patterns = [
+            '[gmail]/all mail', '[gmail]/所有邮件',
+            '[google mail]/all mail', '[google mail]/所有邮件',
+        ]
+        spam_patterns = [
+            '[gmail]/spam', '[gmail]/垃圾邮件',
+            '[google mail]/spam', '[google mail]/垃圾邮件',
+        ]
+
+        folder_lower = {name.lower(): name for name in available_folders}
+        resolved = []
+
+        for pattern in all_mail_patterns:
+            if pattern in folder_lower:
+                resolved.append(folder_lower[pattern])
+                break
+
+        for pattern in spam_patterns:
+            if pattern in folder_lower:
+                resolved.append(folder_lower[pattern])
+                break
+
+        if not resolved:
+            resolved.append('INBOX')
+
+        return resolved
 
     @staticmethod
     def _decode_header(value: Optional[bytes]) -> str:
@@ -218,10 +249,7 @@ class EmailReaderTool(BaseTool):
 
         folders_to_read = []
         is_gmail_default = self._service == "GMAIL" and folder == "INBOX"
-        if is_gmail_default:
-            Console.step_info(f"Gmail 多分类模式: {GMAIL_CATEGORY_FOLDERS}")
-            folders_to_read = GMAIL_CATEGORY_FOLDERS
-        else:
+        if not is_gmail_default:
             folders_to_read = [folder]
             Console.step_info(f"读取文件夹: {folder}")
 
@@ -240,6 +268,10 @@ class EmailReaderTool(BaseTool):
                 processed_uids_in_session = set()
                 all_available_folders_raw = client.list_folders()
                 all_available_folders = {self.decode_folder_name(f[2]): f[2] for f in all_available_folders_raw}
+
+                if is_gmail_default:
+                    folders_to_read = self._resolve_gmail_folders(all_available_folders)
+                    Console.step_info(f"Gmail 自动检测文件夹: {folders_to_read}")
 
                 for folder_name_to_try in folders_to_read:
                     actual_folder_name_decoded = next((name for name in all_available_folders if name.lower() == folder_name_to_try.lower()), None)
